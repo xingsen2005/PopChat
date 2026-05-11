@@ -41,11 +41,66 @@ function App()
 
   const streamingContentMap = useRef<Map<string, string>>(new Map())
   const currentConversationRef = useRef<Conversation | null>(null)
+  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() =>
   {
     currentConversationRef.current = currentConversation
   }, [currentConversation])
+
+  useEffect(() =>
+  {
+    if (error)
+    {
+      if (errorTimeoutRef.current)
+      {
+        clearTimeout(errorTimeoutRef.current)
+      }
+      const autoDismissErrors = ['NETWORK_ERROR', 'TIMEOUT', 'RATE_LIMITED', 'HTTP_']
+      const shouldAutoDismiss = autoDismissErrors.some(e => error.startsWith(e))
+      if (shouldAutoDismiss)
+      {
+        errorTimeoutRef.current = setTimeout(() =>
+        {
+          setError('')
+        }, 5000)
+      }
+    }
+    return () =>
+    {
+      if (errorTimeoutRef.current)
+      {
+        clearTimeout(errorTimeoutRef.current)
+      }
+    }
+  }, [error])
+
+  useEffect(() =>
+  {
+    const handleKeyDown = (e: KeyboardEvent) =>
+    {
+      if (e.ctrlKey || e.metaKey)
+      {
+        if (e.key === 'n' || e.key === 'N')
+        {
+          e.preventDefault()
+          createNewConversation()
+        }
+        else if (e.key === 'm' || e.key === 'M')
+        {
+          e.preventDefault()
+          setView(view === 'models' ? 'chat' : 'models')
+        }
+        else if (e.key === ',' || e.key === '<')
+        {
+          e.preventDefault()
+          setView(view === 'settings' ? 'chat' : 'settings')
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [createNewConversation, view])
 
   useEffect(() =>
   {
@@ -175,7 +230,12 @@ function App()
   {
     setCurrentConversation(conversation)
     setView('chat')
-  }, [])
+    const targetModel = models.find(m => m.id === conversation.modelId && m.enabled)
+    if (targetModel && targetModel.id !== currentModel?.id)
+    {
+      setCurrentModel(targetModel)
+    }
+  }, [models, currentModel?.id])
 
   const renameConversation = useCallback((id: string, title: string) =>
   {
@@ -656,8 +716,15 @@ function App()
       }
       return remaining
     })
+    const newDefaultModel = models.find(m => m.id !== id && m.enabled) || null
+    if (newDefaultModel)
+    {
+      setConversations(prev => prev.map(c =>
+        c.modelId === id ? { ...c, modelId: newDefaultModel.id } : c
+      ))
+    }
     addLog({ level: 'info', message: `已删除模型：${id}`, context: '模型管理' })
-  }, [currentModel?.id])
+  }, [currentModel?.id, models])
 
   const setDefaultModel = useCallback((id: string) =>
   {

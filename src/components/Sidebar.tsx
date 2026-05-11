@@ -9,7 +9,8 @@ import {
   MessageCircle,
   Check,
   X,
-  Pencil
+  Pencil,
+  Search
 } from 'lucide-react'
 
 interface SidebarProps
@@ -45,8 +46,16 @@ function Sidebar({
   const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
+
+  const filteredConversations = searchQuery.trim()
+    ? conversations.filter(c =>
+        c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.messages.some(m => m.content.toLowerCase().includes(searchQuery.toLowerCase()))
+      )
+    : conversations
 
   useEffect(() =>
   {
@@ -84,6 +93,31 @@ function Sidebar({
 
     return new Date(timestamp).toLocaleDateString()
   }
+
+  const getConversationGroup = (timestamp: number): string =>
+  {
+    const now = Date.now()
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const todayStart = today.getTime()
+    const yesterdayStart = todayStart - 86400000
+    const weekStart = todayStart - 7 * 86400000
+
+    if (timestamp >= todayStart) return '今天'
+    if (timestamp >= yesterdayStart) return '昨天'
+    if (timestamp >= weekStart) return '最近7天'
+    return '更早'
+  }
+
+  const groupedConversations = filteredConversations.reduce((groups, conv) =>
+  {
+    const group = getConversationGroup(conv.updatedAt)
+    if (!groups[group]) groups[group] = []
+    groups[group].push(conv)
+    return groups
+  }, {} as Record<string, Conversation[]>)
+
+  const groupOrder = ['今天', '昨天', '最近7天', '更早']
 
   const handleDelete = (id: string) =>
   {
@@ -153,16 +187,39 @@ function Sidebar({
           </h2>
         </div>
 
-        {conversations.length === 0 ? (
+        {conversations.length > 0 && (
+          <div className="px-3 mb-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索对话..."
+                className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary-500 text-gray-800 dark:text-gray-100 placeholder-gray-400"
+              />
+            </div>
+          </div>
+        )}
+
+        {filteredConversations.length === 0 ? (
           <div className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">
             <MessageCircle className="mx-auto mb-2 opacity-50" size={32} />
-            <p className="text-sm">暂无对话</p>
-            <p className="text-xs mt-1">点击上方按钮开始新对话</p>
+            <p className="text-sm">{searchQuery ? '未找到匹配的对话' : '暂无对话'}</p>
+            <p className="text-xs mt-1">{searchQuery ? '尝试其他关键词' : '点击上方按钮开始新对话'}</p>
           </div>
         ) : (
-          conversations.map(conversation => (
-            <div
-              key={conversation.id}
+          groupOrder.map(group =>
+            groupedConversations[group]?.length > 0 && (
+              <div key={group}>
+                <div className="px-3 py-1.5">
+                  <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 px-2">
+                    {group}
+                  </h3>
+                </div>
+                {groupedConversations[group].map(conversation => (
+                  <div
+                    key={conversation.id}
               className={`group relative px-3 py-2 cursor-pointer transition-colors ${
                 currentConversation?.id === conversation.id
                   ? 'bg-primary-50 dark:bg-gray-700'
@@ -217,7 +274,11 @@ function Sidebar({
                   )}
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                     {conversation.messages.length > 0
-                      ? conversation.messages[conversation.messages.length - 1].content.substring(0, 30) +
+                      ? conversation.messages[conversation.messages.length - 1].content
+                          .replace(/\[附件：[^\]]+\]/g, '')
+                          .replace(/\n/g, ' ')
+                          .trim()
+                          .substring(0, 30) +
                         (conversation.messages[conversation.messages.length - 1].content.length > 30 ? '...' : '')
                       : '暂无消息'}
                   </p>
@@ -275,8 +336,11 @@ function Sidebar({
                 </div>
               )}
             </div>
-          ))
-        )}
+                ))
+              }
+              </div>
+            ))
+          )}
       </div>
 
       <div className="border-t border-gray-200 dark:border-gray-700 p-3">
@@ -302,7 +366,7 @@ function Sidebar({
             </button>
 
             {showModelDropdown && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
                 {enabledModels.length === 0 ? (
                   <div className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
                     暂无可用模型

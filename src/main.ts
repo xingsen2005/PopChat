@@ -18,6 +18,8 @@ const isDev = process.env.NODE_ENV === 'development'
 let mainWindow: BrowserWindow | null = null
 const streamAbortControllers = new Map<string, AbortController>()
 
+// 智谱 API JWT Token 生成
+// 注意：智谱 API 使用毫秒级时间戳（非标准 JWT 的秒级），这是智谱的约定
 const generateZhipuToken = (apiKey: string): string =>
 {
   const parts = apiKey.split('.')
@@ -256,22 +258,30 @@ ipcMain.handle('api-request', async (_, options: {
   const { url, method, provider, apiKey, body } = options
   try
   {
+    let finalUrl = url
     const headers: Record<string, string> = {
-      'Authorization': getAuthHeader(provider, apiKey),
       'Content-Type': 'application/json'
     }
 
-    if (provider === 'anthropic')
+    if (provider === 'google')
+    {
+      const separator = finalUrl.includes('?') ? '&' : '?'
+      finalUrl = `${finalUrl}${separator}key=${encodeURIComponent(apiKey)}`
+    }
+    else if (provider === 'anthropic')
     {
       headers['anthropic-version'] = '2023-06-01'
       headers['x-api-key'] = apiKey
-      delete headers['Authorization']
+    }
+    else
+    {
+      headers['Authorization'] = getAuthHeader(provider, apiKey)
     }
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 120000)
 
-    const response = await fetch(url, {
+    const response = await fetch(finalUrl, {
       method: method || 'GET',
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -332,15 +342,25 @@ ipcMain.handle('fetch-token-quota', async (_, options: {
 
   try
   {
+    let finalUrl = url
     const headers: Record<string, string> = {
-      'Authorization': getAuthHeader(provider, apiKey),
       'Content-Type': 'application/json'
+    }
+
+    if (provider === 'google')
+    {
+      const separator = finalUrl.includes('?') ? '&' : '?'
+      finalUrl = `${finalUrl}${separator}key=${encodeURIComponent(apiKey)}`
+    }
+    else
+    {
+      headers['Authorization'] = getAuthHeader(provider, apiKey)
     }
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000)
 
-    const response = await fetch(url, {
+    const response = await fetch(finalUrl, {
       method: 'GET',
       headers,
       signal: controller.signal
@@ -450,23 +470,31 @@ ipcMain.handle('api-stream-request', async (_, options: {
 
   try
   {
+    let finalUrl = url
     const headers: Record<string, string> = {
-      'Authorization': getAuthHeader(provider, apiKey),
       'Content-Type': 'application/json'
     }
 
-    if (provider === 'anthropic')
+    if (provider === 'google')
+    {
+      const separator = finalUrl.includes('?') ? '&' : '?'
+      finalUrl = `${finalUrl}${separator}key=${encodeURIComponent(apiKey)}`
+    }
+    else if (provider === 'anthropic')
     {
       headers['anthropic-version'] = '2023-06-01'
       headers['x-api-key'] = apiKey
-      delete headers['Authorization']
+    }
+    else
+    {
+      headers['Authorization'] = getAuthHeader(provider, apiKey)
     }
 
     const abortController = new AbortController()
     streamAbortControllers.set(streamId, abortController)
     const timeoutId = setTimeout(() => abortController.abort(), 120000)
 
-    const response = await fetch(url, {
+    const response = await fetch(finalUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

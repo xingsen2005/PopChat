@@ -149,7 +149,7 @@ export const fetchModels = async (model: ModelConfig): Promise<{ success: boolea
         modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.id as string) || []
         break
       case 'google':
-        modelList = (response?.models as Record<string, unknown>[])?.map((m) => m.name as string) || []
+        modelList = (response?.models as Record<string, unknown>[])?.map((m) => (m.name as string).replace(/^models\//, '')) || []
         break
       case 'zhipu':
         modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.model_name as string) || []
@@ -177,10 +177,9 @@ export const fetchModels = async (model: ModelConfig): Promise<{ success: boolea
 export const abortStream = (streamId?: string): void =>
 {
   window.electronAPI.apiStreamAbort(streamId)
-  window.electronAPI.removeApiStreamListeners()
 }
 
-const buildChatUrl = (model: ModelConfig, stream: boolean = false): string =>
+const buildChatUrl = (model: ModelConfig, stream: boolean = false, apiKey?: string): string =>
 {
   const provider = PROVIDERS[model.provider]
   const baseURL = model.customEndpoint || provider.defaultEndpoint
@@ -190,7 +189,8 @@ const buildChatUrl = (model: ModelConfig, stream: boolean = false): string =>
   if (model.provider === 'google' && stream)
   {
     const streamPath = resolvedPath.replace(':generateContent', ':streamGenerateContent')
-    return `${baseURL}${streamPath}?alt=sse`
+    const keyParam = apiKey ? `&key=${encodeURIComponent(apiKey)}` : ''
+    return `${baseURL}${streamPath}?alt=sse${keyParam}`
   }
 
   return `${baseURL}${resolvedPath}`
@@ -215,7 +215,7 @@ const buildRequestBody = (model: ModelConfig, messages: Message[], stream: boole
 
     return {
       model: model.modelId,
-      max_tokens: 4096,
+      max_tokens: 8192,
       stream,
       ...(systemMessage ? { system: systemMessage.content } : {}),
       messages: chatMessages
@@ -256,7 +256,7 @@ export const sendMessage = async (
   streamId: string
 ): Promise<void> =>
 {
-  const url = buildChatUrl(model, true)
+  const url = buildChatUrl(model, true, model.apiKey)
   const handlers: { chunk?: unknown; error?: unknown; done?: unknown } = {}
 
   try
@@ -310,7 +310,7 @@ export const sendMessageNonStream = async (
   messages: Message[]
 ): Promise<{ success: boolean; content: string; error?: APIError }> =>
 {
-  const url = buildChatUrl(model, false)
+  const url = buildChatUrl(model, false, model.apiKey)
 
   try
   {

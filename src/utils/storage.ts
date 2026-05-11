@@ -14,27 +14,51 @@ const readStorage = (key: string): string =>
   return raw
 }
 
-const writeStorage = (key: string, content: string): void =>
+const writeStorage = (key: string, content: string): boolean =>
 {
-  localStorage.setItem(STORAGE_PREFIX + key, content)
+  try
+  {
+    localStorage.setItem(STORAGE_PREFIX + key, content)
+    return true
+  }
+  catch (error)
+  {
+    if (error instanceof DOMException && error.name === 'QuotaExceededError')
+    {
+      console.error(`存储空间不足，无法保存 ${key}`)
+      return false
+    }
+    throw error
+  }
 }
 
 const encryptApiKey = async (apiKey: string): Promise<string> =>
 {
   if (!electronAPI?.safeStorageEncrypt)
   {
-    return apiKey
+    return `plain:${Buffer.from(apiKey).toString('base64')}`
   }
   const result = await electronAPI.safeStorageEncrypt(apiKey)
   if (result.success)
   {
     return `encrypted:${result.data}`
   }
-  return apiKey
+  return `plain:${Buffer.from(apiKey).toString('base64')}`
 }
 
 const decryptApiKey = async (encrypted: string): Promise<string> =>
 {
+  if (encrypted.startsWith('plain:'))
+  {
+    try
+    {
+      return Buffer.from(encrypted.substring(6), 'base64').toString('utf-8')
+    }
+    catch
+    {
+      return ''
+    }
+  }
   if (!encrypted.startsWith('encrypted:') || !electronAPI?.safeStorageDecrypt)
   {
     return encrypted
@@ -57,7 +81,11 @@ export const saveModels = async (models: ModelConfig[]): Promise<void> =>
       return { ...model, apiKey: encryptedKey }
     })
   )
-  writeStorage('models', JSON.stringify(encrypted))
+  const success = writeStorage('models', JSON.stringify(encrypted))
+  if (!success)
+  {
+    console.error('模型保存失败：存储空间不足')
+  }
 }
 
 export const loadModels = async (): Promise<ModelConfig[]> =>
@@ -84,10 +112,13 @@ export const loadModels = async (): Promise<ModelConfig[]> =>
   }
 }
 
-export const saveConversations = (conversations: Conversation[]): Promise<void> =>
+export const saveConversations = (conversations: Conversation[]): void =>
 {
-  writeStorage('conversations', JSON.stringify(conversations))
-  return Promise.resolve()
+  const success = writeStorage('conversations', JSON.stringify(conversations))
+  if (!success)
+  {
+    console.error('对话保存失败：存储空间不足')
+  }
 }
 
 export const loadConversations = (): Promise<Conversation[]> =>
@@ -107,10 +138,13 @@ export const loadConversations = (): Promise<Conversation[]> =>
   }
 }
 
-export const saveSettings = (settings: AppSettings): Promise<void> =>
+export const saveSettings = (settings: AppSettings): void =>
 {
-  writeStorage('settings', JSON.stringify(settings))
-  return Promise.resolve()
+  const success = writeStorage('settings', JSON.stringify(settings))
+  if (!success)
+  {
+    console.error('设置保存失败：存储空间不足')
+  }
 }
 
 export const loadSettings = (): Promise<AppSettings> =>

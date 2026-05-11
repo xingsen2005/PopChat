@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { ModelConfig, PROVIDERS, ProviderType, ProviderInfo } from '../types'
 import { fetchModels } from '../utils/api'
-import { X, RefreshCw, Check, AlertCircle } from 'lucide-react'
+import { X, RefreshCw, Check, AlertCircle, Eye, EyeOff } from 'lucide-react'
 
 interface ModelConfigModalProps
 {
@@ -15,7 +15,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
 {
   const [name, setName] = useState(model?.name || '')
   const [provider, setProvider] = useState<ProviderType>(model?.provider || 'openai')
-  const [apiKey, setApiKey] = useState(model?.apiKey || '')
+  const [apiKey, setApiKey] = useState('')
   const [modelId, setModelId] = useState(model?.modelId || '')
   const [customEndpoint, setCustomEndpoint] = useState(model?.customEndpoint || '')
   const [enabled, setEnabled] = useState(model?.enabled ?? true)
@@ -26,7 +26,11 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
   const [fetchError, setFetchError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [hasFetched, setHasFetched] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
   const apiKeyRef = useRef<HTMLInputElement>(null)
+
+  const isEditing = !!model
+  const apiKeyPlaceholder = isEditing ? '已配置（留空保持不变）' : '输入您的 API 密钥'
 
   useEffect(() =>
   {
@@ -118,7 +122,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
       newErrors.name = '名称为必填项'
     }
 
-    if (!apiKey.trim())
+    if (!apiKey.trim() && !isEditing)
     {
       newErrors.apiKey = 'API 密钥为必填项'
     }
@@ -126,6 +130,22 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
     if (!modelId.trim())
     {
       newErrors.modelId = '模型 ID 为必填项'
+    }
+
+    if (customEndpoint.trim())
+    {
+      try
+      {
+        const url = new URL(customEndpoint.trim())
+        if (url.protocol !== 'https:' && url.protocol !== 'http:')
+        {
+          newErrors.customEndpoint = '端点 URL 必须以 http:// 或 https:// 开头'
+        }
+      }
+      catch
+      {
+        newErrors.customEndpoint = '请输入有效的 URL 格式'
+      }
     }
 
     setErrors(newErrors)
@@ -139,7 +159,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
     onSave({
       name: name.trim(),
       provider,
-      apiKey: apiKey.trim(),
+      apiKey: apiKey.trim() || (isEditing ? model?.apiKey : ''),
       modelId: modelId.trim(),
       customEndpoint: customEndpoint.trim() || undefined,
       enabled,
@@ -211,20 +231,30 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
               API 密钥 *
             </label>
             <div className="flex gap-2">
-              <input
-                ref={apiKeyRef}
-                type="password"
-                value={apiKey}
-                onChange={(e) => { setApiKey(e.target.value); setHasFetched(false) }}
-                onBlur={handleApiKeyBlur}
-                placeholder="输入您的 API 密钥"
-                className={`flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                  errors.apiKey ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
-                }`}
-              />
+              <div className="flex-1 relative">
+                <input
+                  ref={apiKeyRef}
+                  type={showApiKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={(e) => { setApiKey(e.target.value); setHasFetched(false) }}
+                  onBlur={handleApiKeyBlur}
+                  placeholder={apiKeyPlaceholder}
+                  className={`w-full px-3 py-2 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                    errors.apiKey ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title={showApiKey ? '隐藏' : '显示'}
+                >
+                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
               <button
                 onClick={fetchAvailableModels}
-                disabled={isFetchingModels || !apiKey.trim()}
+                disabled={isFetchingModels || (!apiKey.trim() && !isEditing)}
                 className="px-3 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-1 whitespace-nowrap"
                 title="获取模型列表"
               >
@@ -313,8 +343,13 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
               value={customEndpoint}
               onChange={(e) => setCustomEndpoint(e.target.value)}
               placeholder={providers[provider].defaultEndpoint}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                errors.customEndpoint ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+              }`}
             />
+            {errors.customEndpoint && (
+              <p className="text-xs text-red-500 mt-1">{errors.customEndpoint}</p>
+            )}
           </div>
 
           <div className="flex gap-4">

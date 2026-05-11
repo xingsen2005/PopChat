@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { Conversation, ModelConfig, Message, PendingAttachment } from '../types'
-import { Send, Paperclip, Copy, Download, User, Bot, AlertCircle, CheckCircle, XCircle, X, Square, Trash2, Pencil, Check, RefreshCw, FileText, X as XIcon } from 'lucide-react'
+import { Send, Paperclip, Copy, Download, User, Bot, AlertCircle, CheckCircle, XCircle, X, Square, Trash2, Pencil, Check, RefreshCw, FileText, X as XIcon, WifiOff, Clock, Ban, ServerCrash, Key } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 const electronAPI = window.electronAPI
 
@@ -52,6 +54,14 @@ function ChatArea({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const shouldAutoScrollRef = useRef(true)
+
+  useEffect(() =>
+  {
+    if (conversation && textareaRef.current)
+    {
+      textareaRef.current.focus()
+    }
+  }, [conversation?.id])
 
   useEffect(() =>
   {
@@ -207,42 +217,152 @@ function ChatArea({
     }
   }
 
-  const exportConversation = () =>
+  const exportConversation = (format: 'json' | 'markdown' | 'text' = 'json') =>
   {
     if (!conversation) return
 
-    const exportData = {
-      title: conversation.title,
-      model: currentModel?.name,
-      createdAt: new Date(conversation.createdAt).toISOString(),
-      messages: conversation.messages.map(m => ({
-        role: m.role,
-        content: m.content,
-        timestamp: new Date(m.timestamp).toISOString(),
-        filePaths: m.filePaths
-      }))
-    }
+    const sanitizeFilename = (name: string) => name.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_')
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${conversation.title.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_')}.json`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    if (format === 'json')
+    {
+      const exportData = {
+        title: conversation.title,
+        model: currentModel?.name,
+        createdAt: new Date(conversation.createdAt).toISOString(),
+        messages: conversation.messages.map(m => ({
+          role: m.role,
+          content: m.content,
+          timestamp: new Date(m.timestamp).toISOString(),
+          filePaths: m.filePaths
+        }))
+      }
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${sanitizeFilename(conversation.title)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+    else if (format === 'markdown')
+    {
+      let md = `# ${conversation.title}\n\n`
+      md += `> 模型: ${currentModel?.name || '未知'}\n`
+      md += `> 创建时间: ${new Date(conversation.createdAt).toLocaleString()}\n\n`
+      md += `---\n\n`
+      for (const msg of conversation.messages)
+      {
+        const roleLabel = msg.role === 'user' ? '👤 用户' : msg.role === 'assistant' ? '🤖 助手' : '系统'
+        md += `### ${roleLabel}\n\n${msg.content}\n\n`
+      }
+      const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${sanitizeFilename(conversation.title)}.md`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+    else if (format === 'text')
+    {
+      let txt = `${conversation.title}\n`
+      txt += `模型: ${currentModel?.name || '未知'}\n`
+      txt += `创建时间: ${new Date(conversation.createdAt).toLocaleString()}\n`
+      txt += `${'='.repeat(50)}\n\n`
+      for (const msg of conversation.messages)
+      {
+        const roleLabel = msg.role === 'user' ? '用户' : msg.role === 'assistant' ? '助手' : '系统'
+        txt += `[${roleLabel}]\n${msg.content}\n\n`
+      }
+      const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${sanitizeFilename(conversation.title)}.txt`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
   }
 
   const canSend = (inputValue.trim() || pendingAttachments.some(a => a.status === 'ready')) && !!currentModel
 
+  const getErrorStyle = (errorMsg: string) =>
+  {
+    if (errorMsg.startsWith('UNAUTHORIZED') || errorMsg.startsWith('FORBIDDEN'))
+    {
+      return {
+        bg: 'bg-red-50 dark:bg-red-900/30',
+        border: 'border-red-200 dark:border-red-800',
+        icon: Key,
+        iconColor: 'text-red-500',
+        textColor: 'text-red-700 dark:text-red-400'
+      }
+    }
+    if (errorMsg.startsWith('RATE_LIMITED'))
+    {
+      return {
+        bg: 'bg-orange-50 dark:bg-orange-900/30',
+        border: 'border-orange-200 dark:border-orange-800',
+        icon: Clock,
+        iconColor: 'text-orange-500',
+        textColor: 'text-orange-700 dark:text-orange-400'
+      }
+    }
+    if (errorMsg.startsWith('NETWORK_ERROR'))
+    {
+      return {
+        bg: 'bg-yellow-50 dark:bg-yellow-900/30',
+        border: 'border-yellow-200 dark:border-yellow-800',
+        icon: WifiOff,
+        iconColor: 'text-yellow-500',
+        textColor: 'text-yellow-700 dark:text-yellow-400'
+      }
+    }
+    if (errorMsg.startsWith('TIMEOUT'))
+    {
+      return {
+        bg: 'bg-yellow-50 dark:bg-yellow-900/30',
+        border: 'border-yellow-200 dark:border-yellow-800',
+        icon: Clock,
+        iconColor: 'text-yellow-500',
+        textColor: 'text-yellow-700 dark:text-yellow-400'
+      }
+    }
+    if (errorMsg.startsWith('SERVER_ERROR'))
+    {
+      return {
+        bg: 'bg-purple-50 dark:bg-purple-900/30',
+        border: 'border-purple-200 dark:border-purple-800',
+        icon: ServerCrash,
+        iconColor: 'text-purple-500',
+        textColor: 'text-purple-700 dark:text-purple-400'
+      }
+    }
+    return {
+      bg: 'bg-red-50 dark:bg-red-900/30',
+      border: 'border-red-200 dark:border-red-800',
+      icon: AlertCircle,
+      iconColor: 'text-red-500',
+      textColor: 'text-red-700 dark:text-red-400'
+    }
+  }
+
+  const errorStyle = error ? getErrorStyle(error) : null
+  const ErrorIcon = errorStyle?.icon || AlertCircle
+
   return (
     <div className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-800">
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/30 border-b border-red-200 dark:border-red-800 p-3">
+      {error && errorStyle && (
+        <div className={`${errorStyle.bg} border-b ${errorStyle.border} p-3`}>
           <div className="flex items-center gap-2">
-            <AlertCircle size={16} className="text-red-500" />
-            <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
+            <ErrorIcon size={16} className={errorStyle.iconColor} />
+            <span className={`text-sm ${errorStyle.textColor}`}>{error}</span>
             <button
               onClick={onClearError}
               className="ml-auto text-xs text-red-600 dark:text-red-400 hover:underline"
@@ -355,7 +475,7 @@ function ChatArea({
               onClick={handleFileUpload}
               disabled={isLoading || pendingAttachments.length >= MAX_FILES}
               className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
-              title={`添加附件 (${pendingAttachments.length}/${MAX_FILES})`}
+              title={`添加附件 (${pendingAttachments.length}/${MAX_FILES})，单个文件最大 10MB`}
             >
               <Paperclip size={20} />
             </button>
@@ -394,13 +514,34 @@ function ChatArea({
             )}
 
             {conversation && conversation.messages.length > 0 && (
-              <button
-                onClick={exportConversation}
-                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                title="导出对话"
-              >
-                <Download size={20} />
-              </button>
+              <div className="relative group">
+                <button
+                  className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                  title="导出对话"
+                >
+                  <Download size={20} />
+                </button>
+                <div className="absolute bottom-full right-0 mb-1 hidden group-hover:block bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-10 min-w-max">
+                  <button
+                    onClick={() => exportConversation('json')}
+                    className="block w-full px-3 py-1.5 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-t-lg"
+                  >
+                    JSON 格式
+                  </button>
+                  <button
+                    onClick={() => exportConversation('markdown')}
+                    className="block w-full px-3 py-1.5 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                  >
+                    Markdown 格式
+                  </button>
+                  <button
+                    onClick={() => exportConversation('text')}
+                    className="block w-full px-3 py-1.5 text-sm text-left text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-b-lg"
+                  >
+                    纯文本格式
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -550,7 +691,19 @@ function MessageBubble({
                 ? 'bg-primary-500 text-white rounded-tr-sm'
                 : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-tl-sm'
             }`}>
-              <p className="text-sm whitespace-pre-wrap">{message.content || (isStreaming ? '' : '(空)')}</p>
+              {isUser ? (
+                <p className="text-sm whitespace-pre-wrap">{message.content || (isStreaming ? '' : '(空)')}</p>
+              ) : (
+                <div className="text-sm prose prose-sm dark:prose-invert max-w-none prose-pre:bg-gray-800 prose-pre:text-gray-100 prose-code:text-primary-600 dark:prose-code:text-primary-400">
+                  {message.content ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {message.content}
+                    </ReactMarkdown>
+                  ) : isStreaming ? null : (
+                    <span className="text-gray-400">(空)</span>
+                  )}
+                </div>
+              )}
               {renderAttachments()}
               {isStreaming && (
                 <div className="typing-dots mt-1">

@@ -220,7 +220,7 @@ function SettingsPanel({ settings, onUpdateSettings }: SettingsPanelProps)
               </div>
               <button
                 onClick={saveSystemPrompt}
-                disabled={saved || !systemPrompt.trim()}
+                disabled={saved || systemPrompt === (settings.systemPrompt || '')}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-sm bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
                 <Save size={14} />
