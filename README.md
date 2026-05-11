@@ -10,9 +10,9 @@ A feature-complete local AI chat desktop application built with Electron and Rea
 - **OpenAI** - GPT models
 - **Anthropic** - Claude models
 - **xAI** - Grok models
-- **智谱清言 (Zhipu)** - GLM models
+- **Z.AI (Zhipu)** - GLM models
 - **Kimi** - Moonshot AI models
-- **火山引擎 (Volcengine)** - ByteDance Ark models
+- **doubao (Volcengine)** - ByteDance Ark models
 
 ### Core Functionality
 - **Conversational AI** - Real-time streaming chat responses
