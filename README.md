@@ -131,9 +131,9 @@ PopChat/
 | OpenAI | `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo` |
 | Anthropic | `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022` |
 | xAI | `grok-2`, `grok-2-vision` |
-| 智谱清言 | `glm-4`, `glm-4-flash` |
+| Z.AI | `glm-4`, `glm-4-flash` |
 | Kimi | `kimi-chat` |
-| 火山引擎 | `doubao-lite-4k` |
+| doubao | `doubao-lite-4k` |
 
 ### Settings
 
@@ -156,9 +156,9 @@ The application communicates with AI providers through the Electron main process
 | OpenAI | `https://api.openai.com` |
 | Anthropic | `https://api.anthropic.com` |
 | xAI | `https://api.x.ai` |
-| 智谱清言 | `https://open.bigmodel.cn/api/paas/v4` |
+| Z.AI | `https://open.bigmodel.cn/api/paas/v4` |
 | Kimi | `https://api.moonshot.cn/v1` |
-| 火山引擎 | `https://ark.cn-beijing.volces.com/api/v3` |
+| doubao | `https://ark.cn-beijing.volces.com/api/v3` |
 
 ## Keyboard Shortcuts
 
