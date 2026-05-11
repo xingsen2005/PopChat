@@ -8,6 +8,7 @@ import {
   ChevronDown,
   MessageCircle,
   Check,
+  X,
   Pencil
 } from 'lucide-react'
 
@@ -145,7 +146,7 @@ function Sidebar({
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-2">
+      <div className="flex-1 overflow-y-auto chat-scrollbar py-2">
         <div className="px-3 mb-2">
           <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-2">
             对话列表
@@ -185,9 +186,19 @@ function Sidebar({
                         value={editingTitle}
                         onChange={(e) => setEditingTitle(e.target.value)}
                         onKeyDown={handleEditKeyDown}
-                        onBlur={confirmEdit}
+                        onBlur={cancelEdit}
                         className="flex-1 min-w-0 px-2 py-0.5 text-sm border border-primary-400 dark:border-primary-500 rounded bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-primary-500"
                       />
+                      <button
+                        onMouseDown={(e) =>
+                        {
+                          e.preventDefault()
+                          cancelEdit()
+                        }}
+                        className="p-0.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
                       <button
                         onClick={(e) =>
                         {

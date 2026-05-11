@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ModelConfig, PROVIDERS, ProviderType, ProviderInfo } from '../types'
 import { fetchModels } from '../utils/api'
 import { X, RefreshCw, Check, AlertCircle } from 'lucide-react'
@@ -25,14 +25,20 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [fetchError, setFetchError] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [hasFetched, setHasFetched] = useState(false)
+  const apiKeyRef = useRef<HTMLInputElement>(null)
 
   useEffect(() =>
   {
-    if (!useManualModelId)
+    setModelId('')
+    setAvailableModels([])
+    setFetchError('')
+    setHasFetched(false)
+    if (useManualModelId)
     {
-      fetchAvailableModels()
+      setUseManualModelId(false)
     }
-  }, [provider, useManualModelId])
+  }, [provider])
 
   useEffect(() =>
   {
@@ -44,8 +50,15 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
 
   const fetchAvailableModels = async () =>
   {
+    if (!apiKey.trim())
+    {
+      setFetchError('请先输入 API 密钥')
+      return
+    }
+
     setIsFetchingModels(true)
     setFetchError('')
+    setHasFetched(true)
 
     try
     {
@@ -53,7 +66,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
         id: '',
         name: '',
         provider,
-        apiKey: apiKey || 'test',
+        apiKey: apiKey.trim(),
         modelId: '',
         enabled: true,
         isDefault: false,
@@ -66,6 +79,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
       if (result.success && result.data.length > 0)
       {
         setAvailableModels(result.data)
+        setUseManualModelId(false)
       }
       else
       {
@@ -84,6 +98,14 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
     finally
     {
       setIsFetchingModels(false)
+    }
+  }
+
+  const handleApiKeyBlur = () =>
+  {
+    if (apiKey.trim() && !useManualModelId && !hasFetched)
+    {
+      fetchAvailableModels()
     }
   }
 
@@ -188,17 +210,35 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               API 密钥 *
             </label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="输入您的 API 密钥"
-              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                errors.apiKey ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
-              }`}
-            />
+            <div className="flex gap-2">
+              <input
+                ref={apiKeyRef}
+                type="password"
+                value={apiKey}
+                onChange={(e) => { setApiKey(e.target.value); setHasFetched(false) }}
+                onBlur={handleApiKeyBlur}
+                placeholder="输入您的 API 密钥"
+                className={`flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
+                  errors.apiKey ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+                }`}
+              />
+              <button
+                onClick={fetchAvailableModels}
+                disabled={isFetchingModels || !apiKey.trim()}
+                className="px-3 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center gap-1 whitespace-nowrap"
+                title="获取模型列表"
+              >
+                <RefreshCw size={14} className={isFetchingModels ? 'animate-spin' : ''} />
+                获取
+              </button>
+            </div>
             {errors.apiKey && (
               <p className="text-xs text-red-500 mt-1">{errors.apiKey}</p>
+            )}
+            {provider === 'zhipu' && (
+              <p className="text-xs text-gray-400 mt-1">
+                格式：APIKeyID.secret，如 abc123.def456
+              </p>
             )}
           </div>
 
@@ -218,12 +258,12 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
               </label>
             </div>
 
-            {useManualModelId ? (
+            {useManualModelId || availableModels.length === 0 ? (
               <input
                 type="text"
                 value={modelId}
                 onChange={(e) => setModelId(e.target.value)}
-                placeholder="输入模型 ID"
+                placeholder={hasFetched && availableModels.length === 0 ? '输入模型 ID（如 glm-4-flash）' : '输入模型 ID'}
                 className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                   errors.modelId ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
                 }`}
@@ -233,7 +273,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
                 <select
                   value={modelId}
                   onChange={(e) => setModelId(e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 appearance-none ${
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 appearance-none pr-8 ${
                     errors.modelId ? 'border-red-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
                   }`}
                 >

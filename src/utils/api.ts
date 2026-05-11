@@ -1,20 +1,4 @@
-import axios, { AxiosError } from 'axios'
-import { ModelConfig, Message, PROVIDERS } from '../types'
-
-const createClient = (model: ModelConfig) =>
-{
-  const provider = PROVIDERS[model.provider]
-  const baseURL = model.customEndpoint || provider.defaultEndpoint
-
-  return axios.create({
-    baseURL,
-    headers: {
-      'Authorization': `Bearer ${model.apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 120000
-  })
-}
+import { ModelConfig, Message, PROVIDERS, TokenQuota } from '../types'
 
 export interface APIError
 {
@@ -23,130 +7,244 @@ export interface APIError
   details?: unknown
 }
 
-const parseAxiosError = (error: unknown): APIError =>
+const parseAPIError = (status: number, data: unknown): APIError =>
 {
-  if (axios.isAxiosError(error))
+  const errorData = (data as Record<string, unknown>)?.error as Record<string, unknown> | undefined
+
+  if (status === 401)
   {
-    const axiosError = error as AxiosError
-
-    if (axiosError.code === 'ECONNABORTED')
-    {
-      return { code: 'TIMEOUT', message: '请求超时' }
+    return {
+      code: 'UNAUTHORIZED',
+      message: (errorData?.message as string) || 'API 密钥无效或认证失败'
     }
+  }
 
-    if (axiosError.code === 'ERR_NETWORK')
-    {
-      return { code: 'NETWORK_ERROR', message: '网络错误' }
+  if (status === 403)
+  {
+    return {
+      code: 'FORBIDDEN',
+      message: (errorData?.message as string) || '访问被拒绝'
     }
+  }
 
-    if (axiosError.response)
+  if (status === 429)
+  {
+    return {
+      code: 'RATE_LIMITED',
+      message: (errorData?.message as string) || '请求频率超限，请稍后重试'
+    }
+  }
+
+  if (status >= 500)
+  {
+    return {
+      code: 'SERVER_ERROR',
+      message: (errorData?.message as string) || '服务器错误，请稍后重试'
+    }
+  }
+
+  if (status === 0)
+  {
+    return {
+      code: 'NETWORK_ERROR',
+      message: (errorData?.message as string) || '网络错误'
+    }
+  }
+
+  return {
+    code: `HTTP_${status}`,
+    message: (errorData?.message as string) || `请求失败，状态码 ${status}`,
+    details: data
+  }
+}
+
+export const fetchTokenQuota = async (model: ModelConfig): Promise<{
+  success: boolean
+  quota?: TokenQuota
+  error?: string
+}> =>
+{
+  const provider = PROVIDERS[model.provider]
+
+  if (!provider.balanceEndpoint)
+  {
+    return {
+      success: false,
+      error: '该服务商暂不支持额度查询'
+    }
+  }
+
+  const baseURL = model.customEndpoint || provider.defaultEndpoint
+
+  try
+  {
+    const result = await window.electronAPI.fetchTokenQuota({
+      provider: model.provider,
+      apiKey: model.apiKey,
+      baseURL,
+      balanceEndpoint: provider.balanceEndpoint
+    })
+
+    if (result.success && result.quota)
     {
-      const status = axiosError.response.status
-      const data = axiosError.response.data as Record<string, unknown> | undefined
-      const errorData = data?.error as Record<string, unknown> | undefined
-
-      if (status === 401)
-      {
-        return {
-          code: 'UNAUTHORIZED',
-          message: (errorData?.message as string) || 'API 密钥无效或认证失败'
-        }
-      }
-
-      if (status === 403)
-      {
-        return {
-          code: 'FORBIDDEN',
-          message: (errorData?.message as string) || '访问被拒绝'
-        }
-      }
-
-      if (status === 429)
-      {
-        return {
-          code: 'RATE_LIMITED',
-          message: (errorData?.message as string) || '请求频率超限，请稍后重试'
-        }
-      }
-
-      if (status >= 500)
-      {
-        return {
-          code: 'SERVER_ERROR',
-          message: (errorData?.message as string) || '服务器错误，请稍后重试'
-        }
-      }
-
       return {
-        code: `HTTP_${status}`,
-        message: (errorData?.message as string) || `请求失败，状态码 ${status}`,
-        details: data
+        success: true,
+        quota: result.quota
       }
     }
 
     return {
-      code: 'UNKNOWN',
-      message: axiosError.message || '未知错误'
+      success: false,
+      error: result.error || '获取额度失败'
     }
   }
-
-  return {
-    code: 'UNKNOWN',
-    message: error instanceof Error ? error.message : '未知错误'
-  }
-}
-
-const parseFetchError = (error: unknown): APIError =>
-{
-  if (error instanceof TypeError && error.message.includes('Failed to fetch'))
+  catch (error)
   {
-    return { code: 'NETWORK_ERROR', message: '网络错误' }
-  }
-  return {
-    code: 'UNKNOWN',
-    message: error instanceof Error ? error.message : '未知错误'
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '未知错误'
+    }
   }
 }
 
 export const fetchModels = async (model: ModelConfig): Promise<{ success: boolean; data: string[]; error?: APIError }> =>
 {
   const provider = PROVIDERS[model.provider]
-  const client = createClient(model)
+
+  if (provider.staticModels)
+  {
+    return { success: true, data: provider.staticModels }
+  }
+
+  const baseURL = model.customEndpoint || provider.defaultEndpoint
+  const modelsEndpoint = provider.modelsEndpoint || '/v1/models'
+  const url = `${baseURL}${modelsEndpoint}`
 
   try
   {
-    const response = await client.get(provider.modelsEndpoint || '/v1/models')
+    const result = await window.electronAPI.apiRequest({
+      url,
+      method: 'GET',
+      provider: model.provider,
+      apiKey: model.apiKey
+    })
 
-    let result: string[] = []
+    if (!result.ok)
+    {
+      if (result.error)
+      {
+        return { success: false, data: [], error: result.error as APIError }
+      }
+      return { success: false, data: [], error: parseAPIError(result.status, result.data) }
+    }
+
+    const response = result.data as Record<string, unknown>
+    let modelList: string[] = []
+
     switch (model.provider)
     {
       case 'openai':
       case 'deepseek':
       case 'xai':
-        result = response.data.data.map((m: Record<string, unknown>) => m.id as string)
-        break
-      case 'anthropic':
-        result = response.data.models.map((m: Record<string, unknown>) => m.name as string)
+        modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.id as string) || []
         break
       case 'google':
-        result = response.data.models.map((m: Record<string, unknown>) => m.name as string)
+        modelList = (response?.models as Record<string, unknown>[])?.map((m) => m.name as string) || []
         break
       case 'zhipu':
-        result = response.data.data.map((m: Record<string, unknown>) => m.model_name as string)
+        modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.model_name as string) || []
         break
       case 'kimi':
-        result = response.data.data.map((m: Record<string, unknown>) => m.id as string)
+        modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.id as string) || []
         break
       case 'volcengine':
-        result = response.data.models.map((m: Record<string, unknown>) => m.name as string)
+        modelList = (response?.data as Record<string, unknown>[])?.map((m) => m.id as string) || []
         break
     }
 
-    return { success: true, data: result }
+    return { success: true, data: modelList }
   }
   catch (error)
   {
-    return { success: false, data: [], error: parseAxiosError(error) }
+    return {
+      success: false,
+      data: [],
+      error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : '未知错误' }
+    }
+  }
+}
+
+export const abortStream = (streamId?: string): void =>
+{
+  window.electronAPI.apiStreamAbort(streamId)
+  window.electronAPI.removeApiStreamListeners()
+}
+
+const buildChatUrl = (model: ModelConfig, stream: boolean = false): string =>
+{
+  const provider = PROVIDERS[model.provider]
+  const baseURL = model.customEndpoint || provider.defaultEndpoint
+  const chatPath = provider.chatEndpoint || '/v1/chat/completions'
+  const resolvedPath = chatPath.replace('{modelId}', model.modelId)
+
+  if (model.provider === 'google' && stream)
+  {
+    const streamPath = resolvedPath.replace(':generateContent', ':streamGenerateContent')
+    return `${baseURL}${streamPath}?alt=sse`
+  }
+
+  return `${baseURL}${resolvedPath}`
+}
+
+const buildRequestBody = (model: ModelConfig, messages: Message[], stream: boolean): Record<string, unknown> =>
+{
+  if (model.provider === 'anthropic')
+  {
+    const systemMessage = messages.find(m => m.role === 'system')
+    const chatMessages = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({
+        role: (m.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+        content: m.content
+      }))
+
+    if (chatMessages.length > 0 && chatMessages[0].role !== 'user')
+    {
+      chatMessages.unshift({ role: 'user', content: ' ' })
+    }
+
+    return {
+      model: model.modelId,
+      max_tokens: 4096,
+      stream,
+      ...(systemMessage ? { system: systemMessage.content } : {}),
+      messages: chatMessages
+    }
+  }
+
+  if (model.provider === 'google')
+  {
+    return {
+      model: model.modelId,
+      contents: messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }]
+        })),
+      ...(messages.find(m => m.role === 'system')
+        ? { systemInstruction: { parts: [{ text: messages.find(m => m.role === 'system')!.content }] } }
+        : {})
+    }
+  }
+
+  return {
+    model: model.modelId,
+    messages: messages.map(m => ({
+      role: m.role,
+      content: m.content
+    })),
+    stream
   }
 }
 
@@ -154,134 +252,56 @@ export const sendMessage = async (
   model: ModelConfig,
   messages: Message[],
   onChunk: (chunk: string) => void,
-  onError: (error: APIError) => void
+  onError: (error: APIError) => void,
+  streamId: string
 ): Promise<void> =>
 {
-  const provider = PROVIDERS[model.provider]
-  const baseURL = model.customEndpoint || provider.defaultEndpoint
-  const url = `${baseURL}/v1/chat/completions`
+  const url = buildChatUrl(model, true)
+  const handlers: { chunk?: unknown; error?: unknown; done?: unknown } = {}
 
   try
   {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${model.apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: model.modelId,
-        messages: messages.map(m => ({
-          role: m.role,
-          content: m.content
-        })),
-        stream: true
+    await new Promise<void>((resolve) =>
+    {
+      handlers.chunk = window.electronAPI.onApiStreamChunk((data: { content: string; streamId: string }) =>
+      {
+        if (data.streamId === streamId)
+        {
+          onChunk(data.content)
+        }
+      })
+
+      handlers.error = window.electronAPI.onApiStreamError((data: { status: number; data: unknown; streamId: string }) =>
+      {
+        if (data.streamId === streamId)
+        {
+          onError(parseAPIError(data.status, data.data))
+          window.electronAPI.removeApiStreamListeners(handlers)
+          resolve()
+        }
+      })
+
+      handlers.done = window.electronAPI.onApiStreamDone((data: { streamId: string }) =>
+      {
+        if (data.streamId === streamId)
+        {
+          window.electronAPI.removeApiStreamListeners(handlers)
+          resolve()
+        }
+      })
+
+      window.electronAPI.apiStreamRequest({
+        url,
+        provider: model.provider,
+        apiKey: model.apiKey,
+        body: buildRequestBody(model, messages, true),
+        streamId
       })
     })
-
-    if (!response.ok)
-    {
-      let errorData: Record<string, unknown> | null = null
-      try
-      {
-        errorData = await response.json() as Record<string, unknown>
-      }
-      catch
-      {
-        // ignore parse error
-      }
-
-      const errorObj = errorData?.error as Record<string, unknown> | undefined
-      const status = response.status
-
-      if (status === 401)
-      {
-        onError({ code: 'UNAUTHORIZED', message: (errorObj?.message as string) || 'API 密钥无效' })
-        return
-      }
-      if (status === 429)
-      {
-        onError({ code: 'RATE_LIMITED', message: (errorObj?.message as string) || '请求频率超限' })
-        return
-      }
-      if (status >= 500)
-      {
-        onError({ code: 'SERVER_ERROR', message: (errorObj?.message as string) || '服务器错误' })
-        return
-      }
-
-      onError({
-        code: `HTTP_${status}`,
-        message: (errorObj?.message as string) || `请求失败，状态码 ${status}`
-      })
-      return
-    }
-
-    const reader = response.body?.getReader()
-    if (!reader)
-    {
-      onError({ code: 'STREAM_ERROR', message: '获取响应流失败' })
-      return
-    }
-
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true)
-    {
-      const { done, value } = await reader.read()
-      if (done)
-      {
-        break
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-
-      while (buffer.includes('\n\n'))
-      {
-        const idx = buffer.indexOf('\n\n')
-        const line = buffer.substring(0, idx)
-        buffer = buffer.substring(idx + 2)
-
-        if (line.startsWith('data: '))
-        {
-          const data = line.substring(6)
-          if (data === '[DONE]')
-          {
-            return
-          }
-
-          try
-          {
-            const json = JSON.parse(data)
-
-            if (json.error)
-            {
-              onError({
-                code: 'API_ERROR',
-                message: json.error.message || 'API error occurred',
-                details: json.error
-              })
-              return
-            }
-
-            const content = json.choices?.[0]?.delta?.content || ''
-            if (content)
-            {
-              onChunk(content)
-            }
-          }
-          catch
-          {
-            // skip unparseable chunks
-          }
-        }
-      }
-    }
   }
-  catch (error)
+  finally
   {
-    onError(parseFetchError(error))
+    window.electronAPI.removeApiStreamListeners(handlers)
   }
 }
 
@@ -290,26 +310,54 @@ export const sendMessageNonStream = async (
   messages: Message[]
 ): Promise<{ success: boolean; content: string; error?: APIError }> =>
 {
-  const client = createClient(model)
+  const url = buildChatUrl(model, false)
 
   try
   {
-    const response = await client.post('/v1/chat/completions', {
-      model: model.modelId,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content
-      })),
-      stream: false
+    const result = await window.electronAPI.apiRequest({
+      url,
+      method: 'POST',
+      provider: model.provider,
+      apiKey: model.apiKey,
+      body: buildRequestBody(model, messages, false)
     })
 
-    return {
-      success: true,
-      content: response.data.choices?.[0]?.message?.content || ''
+    if (!result.ok)
+    {
+      if (result.error)
+      {
+        return { success: false, content: '', error: result.error as APIError }
+      }
+      return { success: false, content: '', error: parseAPIError(result.status, result.data) }
     }
+
+    const responseData = result.data as Record<string, unknown>
+    let content = ''
+
+    if (model.provider === 'anthropic')
+    {
+      content = (responseData?.content as Record<string, unknown>[])?.[0]?.text as string || ''
+    }
+    else if (model.provider === 'google')
+    {
+      content = (responseData?.candidates as Record<string, unknown>[])?.[0]?.content as Record<string, unknown>
+        ? (((responseData?.candidates as Record<string, unknown>[])[0]?.content as Record<string, unknown>)?.parts as Record<string, unknown>[])?.[0]?.text as string || ''
+        : ''
+    }
+    else
+    {
+      const choices = responseData?.choices as Record<string, unknown>[] | undefined
+      content = (choices?.[0]?.message as Record<string, unknown>)?.content as string || ''
+    }
+
+    return { success: true, content }
   }
   catch (error)
   {
-    return { success: false, content: '', error: parseAxiosError(error) }
+    return {
+      success: false,
+      content: '',
+      error: { code: 'UNKNOWN', message: error instanceof Error ? error.message : '未知错误' }
+    }
   }
 }

@@ -22,53 +22,28 @@ async function buildMain()
 
 async function buildRenderer()
 {
-  await build({
-    entryPoints: [path.resolve(__dirname, '../src/main.tsx')],
-    outfile: path.resolve(__dirname, '../dist/renderer.js'),
-    bundle: true,
-    platform: 'browser',
-    target: 'chrome110',
-    tsconfig: path.resolve(__dirname, '../tsconfig.json'),
-    resolveExtensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
-    loader: {
-      '.svg': 'dataurl',
-      '.png': 'dataurl',
-      '.jpg': 'dataurl'
-    }
-  })
-}
-
-async function buildCSS()
-{
-  const inputPath = `"${path.resolve(__dirname, '../src/index.css')}"`
-  const outputPath = `"${path.resolve(__dirname, '../dist/style.css')}"`
-
   return new Promise((resolve, reject) =>
   {
-    exec(
-      `npx tailwindcss -i ${inputPath} -o ${outputPath}`,
-      (error, stdout, stderr) =>
+    const child = exec('npx vite build', {
+      cwd: path.resolve(__dirname, '..')
+    }, (error, stdout, stderr) =>
+    {
+      if (error)
       {
-        if (error)
-        {
-          reject(error)
-        }
-        else
-        {
-          resolve(stdout)
-        }
+        reject(error)
       }
-    )
+      else
+      {
+        resolve(stdout)
+      }
+    })
+    child.stdout?.pipe(process.stdout)
+    child.stderr?.pipe(process.stderr)
   })
 }
 
 async function copyAssets()
 {
-  await fs.copy(
-    path.resolve(__dirname, '../src/index.html'),
-    path.resolve(__dirname, '../dist/index.html')
-  )
-
   await fs.copy(
     path.resolve(__dirname, '../src/preload.js'),
     path.resolve(__dirname, '../dist/preload.js')
@@ -79,10 +54,16 @@ async function main()
 {
   try
   {
-    await fs.emptyDir(path.resolve(__dirname, '../dist'))
+    const distDir = path.resolve(__dirname, '../dist')
+    const rendererDir = path.resolve(__dirname, '../dist/renderer')
+
+    await fs.emptyDir(distDir)
+
     await buildMain()
+
+    await fs.ensureDir(rendererDir)
     await buildRenderer()
-    await buildCSS()
+
     await copyAssets()
     console.log('Build completed successfully!')
   }

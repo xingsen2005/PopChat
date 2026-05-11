@@ -1,43 +1,8 @@
-import CryptoJS from 'crypto-js'
 import { ModelConfig, Conversation, AppSettings, LogEntry } from '../types'
 
 const STORAGE_PREFIX = 'ai-chat-desktop:'
 
-const generateEncryptionKey = (): string =>
-{
-  const raw = [
-    navigator.userAgent,
-    screen.width,
-    screen.height,
-    navigator.language
-  ].join('|')
-  return CryptoJS.SHA256(raw).toString(CryptoJS.enc.Hex).substring(0, 32)
-}
-
-const ENCRYPTION_KEY = generateEncryptionKey()
-
-const encrypt = (data: string): string =>
-{
-  return CryptoJS.AES.encrypt(data, ENCRYPTION_KEY).toString()
-}
-
-const decrypt = (data: string): string | null =>
-{
-  try
-  {
-    const bytes = CryptoJS.AES.decrypt(data, ENCRYPTION_KEY)
-    const decrypted = bytes.toString(CryptoJS.enc.Utf8)
-    if (!decrypted)
-    {
-      return null
-    }
-    return decrypted
-  }
-  catch
-  {
-    return null
-  }
-}
+const electronAPI = window.electronAPI
 
 const readStorage = (key: string): string =>
 {
@@ -46,23 +11,53 @@ const readStorage = (key: string): string =>
   {
     return ''
   }
-  const decrypted = decrypt(raw)
-  if (decrypted === null)
-  {
-    localStorage.removeItem(STORAGE_PREFIX + key)
-    return ''
-  }
-  return decrypted
+  return raw
 }
 
 const writeStorage = (key: string, content: string): void =>
 {
-  localStorage.setItem(STORAGE_PREFIX + key, encrypt(content))
+  localStorage.setItem(STORAGE_PREFIX + key, content)
+}
+
+const encryptApiKey = async (apiKey: string): Promise<string> =>
+{
+  if (!electronAPI?.safeStorageEncrypt)
+  {
+    return apiKey
+  }
+  const result = await electronAPI.safeStorageEncrypt(apiKey)
+  if (result.success)
+  {
+    return `encrypted:${result.data}`
+  }
+  return apiKey
+}
+
+const decryptApiKey = async (encrypted: string): Promise<string> =>
+{
+  if (!encrypted.startsWith('encrypted:') || !electronAPI?.safeStorageDecrypt)
+  {
+    return encrypted
+  }
+  const base64Data = encrypted.substring(10)
+  const result = await electronAPI.safeStorageDecrypt(base64Data)
+  if (result.success && result.data)
+  {
+    return result.data
+  }
+  return ''
 }
 
 export const saveModels = async (models: ModelConfig[]): Promise<void> =>
 {
-  writeStorage('models', JSON.stringify(models))
+  const encrypted = await Promise.all(
+    models.map(async (model) =>
+    {
+      const encryptedKey = await encryptApiKey(model.apiKey)
+      return { ...model, apiKey: encryptedKey }
+    })
+  )
+  writeStorage('models', JSON.stringify(encrypted))
 }
 
 export const loadModels = async (): Promise<ModelConfig[]> =>
@@ -74,7 +69,14 @@ export const loadModels = async (): Promise<ModelConfig[]> =>
   }
   try
   {
-    return JSON.parse(data)
+    const parsed: ModelConfig[] = JSON.parse(data)
+    return Promise.all(
+      parsed.map(async (model) =>
+      {
+        const decryptedKey = await decryptApiKey(model.apiKey)
+        return { ...model, apiKey: decryptedKey }
+      })
+    )
   }
   catch
   {
@@ -82,61 +84,60 @@ export const loadModels = async (): Promise<ModelConfig[]> =>
   }
 }
 
-export const saveConversations = async (conversations: Conversation[]): Promise<void> =>
+export const saveConversations = (conversations: Conversation[]): Promise<void> =>
 {
   writeStorage('conversations', JSON.stringify(conversations))
+  return Promise.resolve()
 }
 
-export const loadConversations = async (): Promise<Conversation[]> =>
+export const loadConversations = (): Promise<Conversation[]> =>
 {
   const data = readStorage('conversations')
   if (!data)
   {
-    return []
+    return Promise.resolve([])
   }
   try
   {
-    return JSON.parse(data)
+    return Promise.resolve(JSON.parse(data))
   }
   catch
   {
-    return []
+    return Promise.resolve([])
   }
 }
 
-export const saveSettings = async (settings: AppSettings): Promise<void> =>
+export const saveSettings = (settings: AppSettings): Promise<void> =>
 {
   writeStorage('settings', JSON.stringify(settings))
+  return Promise.resolve()
 }
 
-export const loadSettings = async (): Promise<AppSettings> =>
+export const loadSettings = (): Promise<AppSettings> =>
 {
   const data = readStorage('settings')
+  const defaults: AppSettings = {
+    theme: 'system',
+    autoUpdate: true,
+    compactMode: false
+  }
   if (!data)
   {
-    return {
-      theme: 'system',
-      autoUpdate: true,
-      compactMode: false
-    }
+    return Promise.resolve(defaults)
   }
   try
   {
-    return JSON.parse(data)
+    return Promise.resolve(JSON.parse(data))
   }
   catch
   {
-    return {
-      theme: 'system',
-      autoUpdate: true,
-      compactMode: false
-    }
+    return Promise.resolve(defaults)
   }
 }
 
-export const addLog = async (entry: Omit<LogEntry, 'id' | 'timestamp'>): Promise<void> =>
+export const addLog = (entry: Omit<LogEntry, 'id' | 'timestamp'>): Promise<void> =>
 {
-  const logs = await loadLogs()
+  const logs = loadLogsSync()
   const newEntry: LogEntry = {
     ...entry,
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
@@ -148,9 +149,10 @@ export const addLog = async (entry: Omit<LogEntry, 'id' | 'timestamp'>): Promise
     logs.splice(0, logs.length - 1000)
   }
   writeStorage('logs', JSON.stringify(logs))
+  return Promise.resolve()
 }
 
-export const loadLogs = async (): Promise<LogEntry[]> =>
+const loadLogsSync = (): LogEntry[] =>
 {
   const data = readStorage('logs')
   if (!data)
@@ -167,6 +169,17 @@ export const loadLogs = async (): Promise<LogEntry[]> =>
   }
 }
 
+export const loadLogs = (): Promise<LogEntry[]> =>
+{
+  return Promise.resolve(loadLogsSync())
+}
+
+export const clearAllLogs = (): Promise<void> =>
+{
+  writeStorage('logs', '[]')
+  return Promise.resolve()
+}
+
 export const getDefaultModel = (models: ModelConfig[]): ModelConfig | null =>
 {
   return models.find(m => m.isDefault && m.enabled) || models.find(m => m.enabled) || null
@@ -176,3 +189,5 @@ export const getModelById = (models: ModelConfig[], id: string): ModelConfig | u
 {
   return models.find(m => m.id === id)
 }
+
+export { encryptApiKey, decryptApiKey }

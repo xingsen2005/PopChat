@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ModelConfig, Conversation, Message, AppSettings, PROVIDERS, ProviderType } from './types'
-import { loadModels, saveModels, loadConversations, saveConversations, loadSettings, saveSettings, getDefaultModel, addLog } from './utils/storage'
-import { sendMessage } from './utils/api'
+import { ModelConfig, Conversation, Message, AppSettings, PROVIDERS, ProviderType, PendingAttachment } from './types'
+import { loadModels, saveModels, loadConversations, saveConversations, loadSettings, saveSettings, getDefaultModel, getModelById, addLog } from './utils/storage'
+import { sendMessage, abortStream } from './utils/api'
 import { v4 as uuidv4 } from 'uuid'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
@@ -32,14 +32,20 @@ function App()
   const [isModelConfigOpen, setIsModelConfigOpen] = useState(false)
   const [editingModel, setEditingModel] = useState<ModelConfig | null>(null)
   const [settings, setSettings] = useState<AppSettings>({ theme: 'system', autoUpdate: true, compactMode: false })
-  const [isLoading, setIsLoading] = useState(false)
+  const [loadingConversations, setLoadingConversations] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string>('')
 
   const debouncedSaveModels = useRef(debounce(saveModels, 1000)).current
   const debouncedSaveConversations = useRef(debounce(saveConversations, 1000)).current
   const debouncedSaveSettings = useRef(debounce(saveSettings, 1000)).current
 
-  const streamingContentRef = useRef<string>('')
+  const streamingContentMap = useRef<Map<string, string>>(new Map())
+  const currentConversationRef = useRef<Conversation | null>(null)
+
+  useEffect(() =>
+  {
+    currentConversationRef.current = currentConversation
+  }, [currentConversation])
 
   useEffect(() =>
   {
@@ -54,8 +60,21 @@ function App()
         ])
 
         setModels(loadedModels)
-        const defaultModel = getDefaultModel(loadedModels)
-        setCurrentModel(defaultModel)
+
+        let selectedModel: ModelConfig | null = null
+        if (loadedSettings.lastSelectedModelId)
+        {
+          selectedModel = getModelById(loadedModels, loadedSettings.lastSelectedModelId) || null
+          if (selectedModel && !selectedModel.enabled)
+          {
+            selectedModel = null
+          }
+        }
+        if (!selectedModel)
+        {
+          selectedModel = getDefaultModel(loadedModels)
+        }
+        setCurrentModel(selectedModel)
 
         setConversations(loadedConversations)
         if (loadedConversations.length > 0)
@@ -89,6 +108,20 @@ function App()
     debouncedSaveSettings(settings)
     applyTheme(settings.theme)
   }, [settings, debouncedSaveSettings])
+
+  useEffect(() =>
+  {
+    if (settings.theme !== 'system') return
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleChange = () =>
+    {
+      const root = document.documentElement
+      root.classList.toggle('dark', mediaQuery.matches)
+    }
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [settings.theme])
 
   const applyTheme = (theme: AppSettings['theme']) =>
   {
@@ -130,6 +163,12 @@ function App()
       }
       return remaining
     })
+    setLoadingConversations(prev =>
+    {
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
   }, [currentConversation?.id])
 
   const selectConversation = useCallback((conversation: Conversation) =>
@@ -151,58 +190,102 @@ function App()
   const selectModel = useCallback((model: ModelConfig) =>
   {
     setCurrentModel(model)
+    setSettings(prev => ({ ...prev, lastSelectedModelId: model.id }))
   }, [])
 
-  const addMessage = useCallback((message: Message) =>
+  const addMessageToConversation = useCallback((conversationId: string, message: Message) =>
   {
+    setConversations(prev => prev.map(c =>
+    {
+      if (c.id !== conversationId) return c
+      const updatedMessages = [...c.messages, message]
+      return {
+        ...c,
+        messages: updatedMessages,
+        updatedAt: Date.now(),
+        title: c.messages.length === 0 ? message.content.substring(0, 30) + (message.content.length > 30 ? '...' : '') : c.title
+      }
+    }))
+
     setCurrentConversation(prev =>
     {
-      if (!prev) return prev
-
+      if (!prev || prev.id !== conversationId) return prev
       const updatedMessages = [...prev.messages, message]
-      const updatedConversation: Conversation = {
+      return {
         ...prev,
         messages: updatedMessages,
         updatedAt: Date.now(),
         title: prev.messages.length === 0 ? message.content.substring(0, 30) + (message.content.length > 30 ? '...' : '') : prev.title
       }
-
-      setConversations(convos => convos.map(c => c.id === prev.id ? updatedConversation : c))
-      return updatedConversation
     })
   }, [])
 
-  const updateMessage = useCallback((messageId: string, content: string) =>
+  const updateMessageInConversation = useCallback((conversationId: string, messageId: string, content: string) =>
   {
+    setConversations(prev => prev.map(c =>
+    {
+      if (c.id !== conversationId) return c
+      return {
+        ...c,
+        messages: c.messages.map(m =>
+          m.id === messageId ? { ...m, content } : m
+        )
+      }
+    }))
+
     setCurrentConversation(prev =>
     {
-      if (!prev) return prev
-
-      const updatedMessages = prev.messages.map(m =>
-        m.id === messageId ? { ...m, content } : m
-      )
-      const updatedConversation: Conversation = {
+      if (!prev || prev.id !== conversationId) return prev
+      return {
         ...prev,
-        messages: updatedMessages
+        messages: prev.messages.map(m =>
+          m.id === messageId ? { ...m, content } : m
+        )
       }
-
-      setConversations(convos => convos.map(c => c.id === prev.id ? updatedConversation : c))
-      return updatedConversation
     })
   }, [])
 
-  const sendChatMessage = useCallback(async (content: string) =>
+  const buildApiContent = (text: string, attachments: PendingAttachment[]): string =>
   {
-    if (!currentModel || !content.trim()) return
+    if (attachments.length === 0) return text
 
-    setIsLoading(true)
+    const parts: string[] = []
+
+    if (text.trim())
+    {
+      parts.push(text.trim())
+    }
+
+    for (const attachment of attachments)
+    {
+      if (attachment.content)
+      {
+        parts.push(`[附件：${attachment.name}]\n${attachment.content}`)
+      }
+    }
+
+    return parts.join('\n\n')
+  }
+
+  const sendChatMessage = useCallback(async (content: string, attachments: PendingAttachment[] = []) =>
+  {
+    if (!currentModel) return
+    if (!content.trim() && attachments.length === 0) return
+
+    const conversationId = currentConversationRef.current?.id
+    if (!conversationId) return
+
+    setLoadingConversations(prev => new Set(prev).add(conversationId))
     setError('')
+
+    const filePaths = attachments.map(a => a.path)
 
     const userMessage: Message = {
       id: uuidv4(),
       role: 'user',
       content: content.trim(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      filePaths: filePaths.length > 0 ? filePaths : undefined
     }
 
     const assistantMessage: Message = {
@@ -212,27 +295,51 @@ function App()
       timestamp: Date.now()
     }
 
-    addMessage(userMessage)
-    addMessage(assistantMessage)
+    addMessageToConversation(conversationId, userMessage)
+    addMessageToConversation(conversationId, assistantMessage)
 
-    streamingContentRef.current = ''
+    streamingContentMap.current.set(conversationId, '')
+
+    const apiMessage: Message = {
+      ...userMessage,
+      content: buildApiContent(content.trim(), attachments)
+    }
+
+    const baseMessages = [...(currentConversationRef.current?.messages || []), apiMessage]
+
+    const messagesSnapshot: Message[] = []
+
+    if (settings.systemPrompt)
+    {
+      messagesSnapshot.push({
+        id: uuidv4(),
+        role: 'system',
+        content: settings.systemPrompt,
+        timestamp: Date.now()
+      })
+    }
+
+    messagesSnapshot.push(...baseMessages)
 
     try
     {
       await sendMessage(
         currentModel,
-        [...currentConversation?.messages || [], userMessage],
+        messagesSnapshot,
         (chunk) =>
         {
-          streamingContentRef.current += chunk
-          updateMessage(assistantMessage.id, streamingContentRef.current)
+          const current = streamingContentMap.current.get(conversationId) || ''
+          const updated = current + chunk
+          streamingContentMap.current.set(conversationId, updated)
+          updateMessageInConversation(conversationId, assistantMessage.id, updated)
         },
         (apiError) =>
         {
           const errorMessage = `${apiError.code}: ${apiError.message}`
           setError(errorMessage)
           addLog({ level: 'error', message: errorMessage, context: 'API' })
-        }
+        },
+        conversationId
       )
     }
     catch (err)
@@ -243,9 +350,251 @@ function App()
     }
     finally
     {
-      setIsLoading(false)
+      setLoadingConversations(prev =>
+      {
+        const next = new Set(prev)
+        next.delete(conversationId)
+        return next
+      })
+      streamingContentMap.current.delete(conversationId)
     }
-  }, [currentModel, currentConversation?.messages, addMessage, updateMessage])
+  }, [currentModel, addMessageToConversation, updateMessageInConversation])
+
+  const stopGeneration = useCallback((conversationId?: string) =>
+  {
+    if (conversationId)
+    {
+      abortStream(conversationId)
+      setLoadingConversations(prev =>
+      {
+        const next = new Set(prev)
+        next.delete(conversationId)
+        return next
+      })
+      streamingContentMap.current.delete(conversationId)
+    }
+    else
+    {
+      abortStream()
+      setLoadingConversations(new Set())
+      streamingContentMap.current.clear()
+    }
+  }, [])
+
+  const deleteMessage = useCallback((messageId: string) =>
+  {
+    setCurrentConversation(prev =>
+    {
+      if (!prev) return prev
+
+      const updatedMessages = prev.messages.filter(m => m.id !== messageId)
+      const updatedConversation: Conversation = {
+        ...prev,
+        messages: updatedMessages,
+        updatedAt: Date.now()
+      }
+
+      setConversations(convos => convos.map(c => c.id === prev.id ? updatedConversation : c))
+      return updatedConversation
+    })
+  }, [])
+
+  const editAndResendMessage = useCallback(async (messageId: string, newContent: string) =>
+  {
+    if (!currentModel || !newContent.trim()) return
+
+    const conversationId = currentConversationRef.current?.id
+    if (!conversationId) return
+
+    let messagesToSend: Message[] = []
+
+    setCurrentConversation(prev =>
+    {
+      if (!prev) return prev
+
+      const messageIndex = prev.messages.findIndex(m => m.id === messageId)
+      if (messageIndex === -1) return prev
+
+      const updatedMessages = prev.messages.slice(0, messageIndex)
+      const editedMessage: Message = {
+        ...prev.messages[messageIndex],
+        content: newContent.trim(),
+        timestamp: Date.now()
+      }
+      updatedMessages.push(editedMessage)
+
+      messagesToSend = [...updatedMessages]
+
+      const updatedConversation: Conversation = {
+        ...prev,
+        messages: updatedMessages,
+        updatedAt: Date.now()
+      }
+
+      setConversations(convos => convos.map(c => c.id === prev.id ? updatedConversation : c))
+      return updatedConversation
+    })
+
+    setLoadingConversations(prev => new Set(prev).add(conversationId))
+    setError('')
+
+    const assistantMessage: Message = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now()
+    }
+
+    addMessageToConversation(conversationId, assistantMessage)
+
+    streamingContentMap.current.set(conversationId, '')
+
+    const finalMessages: Message[] = []
+
+    if (settings.systemPrompt)
+    {
+      finalMessages.push({
+        id: uuidv4(),
+        role: 'system',
+        content: settings.systemPrompt,
+        timestamp: Date.now()
+      })
+    }
+    finalMessages.push(...messagesToSend)
+
+    try
+    {
+      await sendMessage(
+        currentModel,
+        finalMessages,
+        (chunk) =>
+        {
+          const current = streamingContentMap.current.get(conversationId) || ''
+          const updated = current + chunk
+          streamingContentMap.current.set(conversationId, updated)
+          updateMessageInConversation(conversationId, assistantMessage.id, updated)
+        },
+        (apiError) =>
+        {
+          const errorMessage = `${apiError.code}: ${apiError.message}`
+          setError(errorMessage)
+          addLog({ level: 'error', message: errorMessage, context: 'API' })
+        },
+        conversationId
+      )
+    }
+    catch (err)
+    {
+      const errorMessage = err instanceof Error ? err.message : '未知错误'
+      setError(errorMessage)
+      addLog({ level: 'error', message: errorMessage, context: 'API' })
+    }
+    finally
+    {
+      setLoadingConversations(prev =>
+      {
+        const next = new Set(prev)
+        next.delete(conversationId)
+        return next
+      })
+      streamingContentMap.current.delete(conversationId)
+    }
+  }, [currentModel, addMessageToConversation, updateMessageInConversation, settings.systemPrompt])
+
+  const regenerateMessage = useCallback(async (messageId: string) =>
+  {
+    if (!currentModel) return
+
+    const conversationId = currentConversationRef.current?.id
+    if (!conversationId) return
+
+    let messagesToSend: Message[] = []
+
+    setCurrentConversation(prev =>
+    {
+      if (!prev) return prev
+
+      const messageIndex = prev.messages.findIndex(m => m.id === messageId)
+      if (messageIndex === -1) return prev
+
+      const updatedMessages = prev.messages.slice(0, messageIndex)
+      messagesToSend = [...updatedMessages]
+
+      const updatedConversation: Conversation = {
+        ...prev,
+        messages: updatedMessages,
+        updatedAt: Date.now()
+      }
+
+      setConversations(convos => convos.map(c => c.id === prev.id ? updatedConversation : c))
+      return updatedConversation
+    })
+
+    setLoadingConversations(prev => new Set(prev).add(conversationId))
+    setError('')
+
+    const assistantMessage: Message = {
+      id: uuidv4(),
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now()
+    }
+
+    addMessageToConversation(conversationId, assistantMessage)
+
+    streamingContentMap.current.set(conversationId, '')
+
+    const finalMessages: Message[] = []
+
+    if (settings.systemPrompt)
+    {
+      finalMessages.push({
+        id: uuidv4(),
+        role: 'system',
+        content: settings.systemPrompt,
+        timestamp: Date.now()
+      })
+    }
+    finalMessages.push(...messagesToSend)
+
+    try
+    {
+      await sendMessage(
+        currentModel,
+        finalMessages,
+        (chunk) =>
+        {
+          const current = streamingContentMap.current.get(conversationId) || ''
+          const updated = current + chunk
+          streamingContentMap.current.set(conversationId, updated)
+          updateMessageInConversation(conversationId, assistantMessage.id, updated)
+        },
+        (apiError) =>
+        {
+          const errorMessage = `${apiError.code}: ${apiError.message}`
+          setError(errorMessage)
+          addLog({ level: 'error', message: errorMessage, context: 'API' })
+        },
+        conversationId
+      )
+    }
+    catch (err)
+    {
+      const errorMessage = err instanceof Error ? err.message : '未知错误'
+      setError(errorMessage)
+      addLog({ level: 'error', message: errorMessage, context: 'API' })
+    }
+    finally
+    {
+      setLoadingConversations(prev =>
+      {
+        const next = new Set(prev)
+        next.delete(conversationId)
+        return next
+      })
+      streamingContentMap.current.delete(conversationId)
+    }
+  }, [currentModel, addMessageToConversation, updateMessageInConversation, settings.systemPrompt])
 
   const addModel = useCallback((model: Omit<ModelConfig, 'id' | 'createdAt' | 'updatedAt'>) =>
   {
@@ -262,9 +611,16 @@ function App()
     }
 
     setModels(prev => [...prev, newModel])
+
+    if (!currentModel)
+    {
+      setCurrentModel(newModel)
+      setSettings(prev => ({ ...prev, lastSelectedModelId: newModel.id }))
+    }
+
     setIsModelConfigOpen(false)
     addLog({ level: 'info', message: `已添加模型：${model.name}`, context: '模型管理' })
-  }, [])
+  }, [currentModel])
 
   const updateModel = useCallback((id: string, updates: Partial<ModelConfig>) =>
   {
@@ -305,24 +661,19 @@ function App()
 
   const setDefaultModel = useCallback((id: string) =>
   {
-    setModels(prev => prev.map(m => ({
-      ...m,
-      isDefault: m.id === id,
-      updatedAt: m.id === id ? Date.now() : m.updatedAt
-    })))
-    setCurrentModel(prev =>
-    {
-      if (prev?.id === id) return prev
-      return prev
-    })
     setModels(prev =>
     {
-      const model = prev.find(m => m.id === id)
+      const updated = prev.map(m => ({
+        ...m,
+        isDefault: m.id === id,
+        updatedAt: m.id === id ? Date.now() : m.updatedAt
+      }))
+      const model = updated.find(m => m.id === id)
       if (model)
       {
         setCurrentModel(model)
       }
-      return prev
+      return updated
     })
     addLog({ level: 'info', message: `已设为默认模型：${id}`, context: '模型管理' })
   }, [])
@@ -360,6 +711,10 @@ function App()
     setSettings(prev => ({ ...prev, ...newSettings }))
   }, [])
 
+  const isCurrentConversationLoading = currentConversation
+    ? loadingConversations.has(currentConversation.id)
+    : false
+
   return (
     <div className="h-screen flex bg-gray-50 dark:bg-gray-900 transition-colors">
       <Sidebar
@@ -382,9 +737,13 @@ function App()
             conversation={currentConversation}
             currentModel={currentModel}
             onSendMessage={sendChatMessage}
-            isLoading={isLoading}
+            isLoading={isCurrentConversationLoading}
             error={error}
             onClearError={() => setError('')}
+            onStopGeneration={() => stopGeneration(currentConversation?.id)}
+            onDeleteMessage={deleteMessage}
+            onEditAndResend={editAndResendMessage}
+            onRegenerate={regenerateMessage}
           />
         )}
 

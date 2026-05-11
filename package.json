@@ -15,14 +15,14 @@
     "React"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "devDependencies": {
-    "@types/crypto-js": "^4.2.1",
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
     "@types/uuid": "^9.0.0",
     "@vitejs/plugin-react": "^4.5.0",
+    "autoprefixer": "^10.5.0",
     "electron": "^30.1.0",
     "electron-builder": "^24.0.0",
     "esbuild": "^0.19.0",
@@ -32,14 +32,11 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "crypto-js": "^4.2.0",
-    "extract-zip": "^2.0.1",
+    "electron-updater": "^6.1.0",
     "lucide-react": "^0.263.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "uuid": "^9.0.1",
-    "yauzl": "^3.3.0"
+    "uuid": "^9.0.1"
   },
   "build": {
     "appId": "com.aichat.desktop",

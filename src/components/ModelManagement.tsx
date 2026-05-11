@@ -1,6 +1,14 @@
-import { useState, useRef } from 'react'
-import { ModelConfig, PROVIDERS } from '../types'
-import { Plus, Edit, Trash2, Check, X, Star, Eye, EyeOff, GripVertical } from 'lucide-react'
+import { useState, useRef, useCallback } from 'react'
+import { ModelConfig, PROVIDERS, TokenQuota } from '../types'
+import { fetchTokenQuota } from '../utils/api'
+import { Plus, Edit, Trash2, Check, X, Star, Eye, EyeOff, GripVertical, RefreshCw, Wallet } from 'lucide-react'
+
+interface QuotaState
+{
+  quota?: TokenQuota
+  loading: boolean
+  error?: string
+}
 
 interface ModelManagementProps
 {
@@ -25,12 +33,42 @@ function ModelManagement({
 {
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [quotaMap, setQuotaMap] = useState<Record<string, QuotaState>>({})
   const dragNodeRef = useRef<HTMLElement | null>(null)
 
   const formatDate = (timestamp: number) =>
   {
     return new Date(timestamp).toLocaleDateString()
   }
+
+  const formatQuotaValue = (value: number, currency: string) =>
+  {
+    if (currency === 'CNY')
+    {
+      return `¥${value.toFixed(2)}`
+    }
+    return `$${value.toFixed(2)}`
+  }
+
+  const handleRefreshQuota = useCallback(async (model: ModelConfig) =>
+  {
+    setQuotaMap(prev => ({
+      ...prev,
+      [model.id]: { ...prev[model.id], loading: true, error: undefined }
+    }))
+
+    const result = await fetchTokenQuota(model)
+
+    setQuotaMap(prev => ({
+      ...prev,
+      [model.id]: {
+        quota: result.success ? result.quota : prev[model.id]?.quota,
+        loading: false,
+        error: result.success ? undefined : result.error
+      }
+    }))
+  }, [])
 
   const handleDragStart = (e: React.DragEvent<HTMLElement>, index: number) =>
   {
@@ -96,6 +134,66 @@ function ModelManagement({
     setDragOverIndex(null)
   }
 
+  const renderQuotaSection = (model: ModelConfig) =>
+  {
+    const provider = PROVIDERS[model.provider]
+    const quotaState = quotaMap[model.id]
+
+    if (!provider.balanceEndpoint)
+    {
+      return (
+        <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-600">
+          <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <Wallet size={14} />
+            <span>该服务商暂不支持额度查询</span>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-600">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Wallet size={14} className="text-primary-500" />
+            {quotaState?.loading ? (
+              <span className="text-xs text-gray-400">查询中...</span>
+            ) : quotaState?.quota ? (
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                  可用：{formatQuotaValue(quotaState.quota.available, quotaState.quota.currency)}
+                </span>
+                <span className="text-xs text-gray-400">
+                  总额：{formatQuotaValue(quotaState.quota.total, quotaState.quota.currency)}
+                </span>
+                {quotaState.quota.total > 0 && (
+                  <div className="w-20 h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min((quotaState.quota.available / quotaState.quota.total) * 100, 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : quotaState?.error ? (
+              <span className="text-xs text-red-400">{quotaState.error}</span>
+            ) : (
+              <span className="text-xs text-gray-400">点击刷新查询额度</span>
+            )}
+          </div>
+          <button
+            onClick={() => handleRefreshQuota(model)}
+            disabled={quotaState?.loading}
+            className="p-1 text-gray-400 hover:text-primary-500 dark:hover:text-primary-400 transition-colors disabled:opacity-50"
+            title="刷新额度"
+          >
+            <RefreshCw size={14} className={quotaState?.loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-gray-100 dark:bg-gray-800">
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
@@ -116,7 +214,7 @@ function ModelManagement({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-scroll custom-scrollbar p-6">
+      <div className="flex-1 scrollbar-visible p-6">
         {models.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-16 h-16 bg-gray-200 dark:bg-gray-700 rounded-full flex items-center justify-center mb-4">
@@ -214,13 +312,7 @@ function ModelManagement({
                         <Edit size={18} />
                       </button>
                       <button
-                        onClick={() =>
-                        {
-                          if (confirm(`确定要删除 ${model.name} 吗？`))
-                          {
-                            onDeleteModel(model.id)
-                          }
-                        }}
+                        onClick={() => setDeleteConfirmId(model.id)}
                         className="p-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg transition-colors"
                         title="删除"
                       >
@@ -237,6 +329,8 @@ function ModelManagement({
                     </div>
                   )}
 
+                  {renderQuotaSection(model)}
+
                   <div className="mt-3 flex items-center gap-4 text-xs text-gray-400">
                     <span>创建时间：{formatDate(model.createdAt)}</span>
                     <span>更新时间：{formatDate(model.updatedAt)}</span>
@@ -249,6 +343,30 @@ function ModelManagement({
                       </button>
                     )}
                   </div>
+
+                  {deleteConfirmId === model.id && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-600">
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-2">确定要删除 {model.name} 吗？</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() =>
+                          {
+                            onDeleteModel(model.id)
+                            setDeleteConfirmId(null)
+                          }}
+                          className="px-3 py-1 text-xs bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors"
+                        >
+                          删除
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(null)}
+                          className="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {dragOverIndex === index && dragIndex !== null && dragIndex !== index && (
