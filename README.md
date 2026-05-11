@@ -1,4 +1,4 @@
-# AI Chat Desktop
+# Pop Chat Desktop
 
 A feature-complete local AI chat desktop application built with Electron and React. Supports multiple AI providers including DeepSeek, Google, OpenAI, Anthropic, xAI, 智谱清言 (Zhipu), Kimi, and 火山引擎 (Volcengine).
 
