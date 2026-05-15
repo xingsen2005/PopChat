@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Conversation, ModelConfig, Message, PendingAttachment } from '../types'
-import { Send, Paperclip, Copy, Download, User, Bot, AlertCircle, CheckCircle, XCircle, X, Square, Trash2, Pencil, Check, RefreshCw, FileText, X as XIcon, WifiOff, Clock, Ban, ServerCrash, Key } from 'lucide-react'
+import { Send, Paperclip, Copy, Download, User, Bot, AlertCircle, CheckCircle, XCircle, X, Square, Trash2, Pencil, Check, RefreshCw, FileText, X as XIcon, WifiOff, Clock, Ban, ServerCrash, Key, Globe, Cpu } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -34,6 +34,7 @@ interface ChatAreaProps
   onDeleteMessage: (messageId: string) => void
   onEditAndResend: (messageId: string, newContent: string) => void
   onRegenerate: (messageId: string) => void
+  promptSource: 'model' | 'global' | 'none'
 }
 
 function ChatArea({
@@ -46,7 +47,8 @@ function ChatArea({
   onStopGeneration,
   onDeleteMessage,
   onEditAndResend,
-  onRegenerate
+  onRegenerate,
+  promptSource
 }: ChatAreaProps)
 {
   const [inputValue, setInputValue] = useState('')
@@ -544,6 +546,21 @@ function ChatArea({
               </div>
             )}
           </div>
+          {currentModel && promptSource !== 'none' && (
+            <div className="max-w-4xl mx-auto mt-1.5 flex items-center justify-center">
+              {promptSource === 'model' ? (
+                <span className="inline-flex items-center gap-1 text-xs text-purple-500 dark:text-purple-400">
+                  <Cpu size={11} />
+                  使用模型专属设置
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs text-blue-500 dark:text-blue-400">
+                  <Globe size={11} />
+                  使用全局设置
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

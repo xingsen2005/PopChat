@@ -259,7 +259,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
                 title="获取模型列表"
               >
                 <RefreshCw size={14} className={isFetchingModels ? 'animate-spin' : ''} />
-                获取
+                验证
               </button>
             </div>
             {errors.apiKey && (
@@ -386,7 +386,7 @@ function ModelConfigModal({ model, providers, onSave, onCancel }: ModelConfigMod
             className="px-4 py-2 text-sm font-medium text-white bg-primary-500 hover:bg-primary-600 rounded-lg transition-colors flex items-center gap-2"
           >
             <Check size={16} />
-            {model ? '更新' : '添加'}
+            {model ? '更新' : '验证'}
           </button>
         </div>
       </div>

@@ -43,6 +43,35 @@ function App()
   const currentConversationRef = useRef<Conversation | null>(null)
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const applyTheme = (theme: AppSettings['theme']) =>
+  {
+    const root = document.documentElement
+    if (theme === 'system')
+    {
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      root.classList.toggle('dark', systemDark)
+    }
+    else
+    {
+      root.classList.toggle('dark', theme === 'dark')
+    }
+  }
+
+  const createNewConversation = useCallback(() =>
+  {
+    const newConversation: Conversation = {
+      id: uuidv4(),
+      title: '新对话',
+      modelId: currentModel?.id || '',
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    }
+    setConversations(prev => [newConversation, ...prev])
+    setCurrentConversation(newConversation)
+    setView('chat')
+  }, [currentModel?.id])
+
   useEffect(() =>
   {
     currentConversationRef.current = currentConversation
@@ -178,35 +207,6 @@ function App()
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [settings.theme])
 
-  const applyTheme = (theme: AppSettings['theme']) =>
-  {
-    const root = document.documentElement
-    if (theme === 'system')
-    {
-      const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      root.classList.toggle('dark', systemDark)
-    }
-    else
-    {
-      root.classList.toggle('dark', theme === 'dark')
-    }
-  }
-
-  const createNewConversation = useCallback(() =>
-  {
-    const newConversation: Conversation = {
-      id: uuidv4(),
-      title: '新对话',
-      modelId: currentModel?.id || '',
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    }
-    setConversations(prev => [newConversation, ...prev])
-    setCurrentConversation(newConversation)
-    setView('chat')
-  }, [currentModel?.id])
-
   const deleteConversation = useCallback((id: string) =>
   {
     setConversations(prev =>
@@ -327,6 +327,23 @@ function App()
     return parts.join('\n\n')
   }
 
+  const getEffectiveSystemPrompt = useCallback((modelId: string): string | undefined =>
+  {
+    const modelPrompt = settings.modelSystemPrompts?.[modelId]
+    if (modelPrompt !== undefined)
+    {
+      return modelPrompt || undefined
+    }
+    return settings.systemPrompt || undefined
+  }, [settings.systemPrompt, settings.modelSystemPrompts])
+
+  const getEffectivePromptSource = useCallback((modelId: string): 'model' | 'global' | 'none' =>
+  {
+    if (settings.modelSystemPrompts?.[modelId] !== undefined) return 'model'
+    if (settings.systemPrompt) return 'global'
+    return 'none'
+  }, [settings.systemPrompt, settings.modelSystemPrompts])
+
   const sendChatMessage = useCallback(async (content: string, attachments: PendingAttachment[] = []) =>
   {
     if (!currentModel) return
@@ -369,12 +386,13 @@ function App()
 
     const messagesSnapshot: Message[] = []
 
-    if (settings.systemPrompt)
+    const effectivePrompt = getEffectiveSystemPrompt(currentModel.id)
+    if (effectivePrompt)
     {
       messagesSnapshot.push({
         id: uuidv4(),
         role: 'system',
-        content: settings.systemPrompt,
+        content: effectivePrompt,
         timestamp: Date.now()
       })
     }
@@ -418,7 +436,7 @@ function App()
       })
       streamingContentMap.current.delete(conversationId)
     }
-  }, [currentModel, addMessageToConversation, updateMessageInConversation])
+  }, [currentModel, addMessageToConversation, updateMessageInConversation, getEffectiveSystemPrompt])
 
   const stopGeneration = useCallback((conversationId?: string) =>
   {
@@ -511,12 +529,13 @@ function App()
 
     const finalMessages: Message[] = []
 
-    if (settings.systemPrompt)
+    const editEffectivePrompt = getEffectiveSystemPrompt(currentModel.id)
+    if (editEffectivePrompt)
     {
       finalMessages.push({
         id: uuidv4(),
         role: 'system',
-        content: settings.systemPrompt,
+        content: editEffectivePrompt,
         timestamp: Date.now()
       })
     }
@@ -559,7 +578,7 @@ function App()
       })
       streamingContentMap.current.delete(conversationId)
     }
-  }, [currentModel, addMessageToConversation, updateMessageInConversation, settings.systemPrompt])
+  }, [currentModel, addMessageToConversation, updateMessageInConversation, getEffectiveSystemPrompt])
 
   const regenerateMessage = useCallback(async (messageId: string) =>
   {
@@ -606,12 +625,13 @@ function App()
 
     const finalMessages: Message[] = []
 
-    if (settings.systemPrompt)
+    const regenEffectivePrompt = getEffectiveSystemPrompt(currentModel.id)
+    if (regenEffectivePrompt)
     {
       finalMessages.push({
         id: uuidv4(),
         role: 'system',
-        content: settings.systemPrompt,
+        content: regenEffectivePrompt,
         timestamp: Date.now()
       })
     }
@@ -654,7 +674,7 @@ function App()
       })
       streamingContentMap.current.delete(conversationId)
     }
-  }, [currentModel, addMessageToConversation, updateMessageInConversation, settings.systemPrompt])
+  }, [currentModel, addMessageToConversation, updateMessageInConversation, getEffectiveSystemPrompt])
 
   const addModel = useCallback((model: Omit<ModelConfig, 'id' | 'createdAt' | 'updatedAt'>) =>
   {
@@ -796,6 +816,8 @@ function App()
         onSelectModel={selectModel}
         onViewChange={setView}
         currentView={view}
+        settings={settings}
+        getEffectivePromptSource={getEffectivePromptSource}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -811,6 +833,7 @@ function App()
             onDeleteMessage={deleteMessage}
             onEditAndResend={editAndResendMessage}
             onRegenerate={regenerateMessage}
+            promptSource={currentModel ? getEffectivePromptSource(currentModel.id) : 'none'}
           />
         )}
 
@@ -830,6 +853,7 @@ function App()
           <SettingsPanel
             settings={settings}
             onUpdateSettings={updateSettings}
+            models={models}
           />
         )}
       </div>

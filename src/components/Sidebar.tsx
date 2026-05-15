@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Conversation, ModelConfig } from '../types'
+import { Conversation, ModelConfig, AppSettings } from '../types'
 import {
   MessageSquarePlus,
   Trash2,
@@ -10,7 +10,9 @@ import {
   Check,
   X,
   Pencil,
-  Search
+  Search,
+  Globe,
+  Cpu
 } from 'lucide-react'
 
 interface SidebarProps
@@ -26,6 +28,8 @@ interface SidebarProps
   onSelectModel: (model: ModelConfig) => void
   onViewChange: (view: 'chat' | 'models' | 'settings') => void
   currentView: 'chat' | 'models' | 'settings'
+  settings: AppSettings
+  getEffectivePromptSource: (modelId: string) => 'model' | 'global' | 'none'
 }
 
 function Sidebar({
@@ -39,7 +43,9 @@ function Sidebar({
   models,
   onSelectModel,
   onViewChange,
-  currentView
+  currentView,
+  settings,
+  getEffectivePromptSource
 }: SidebarProps)
 {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
@@ -381,13 +387,31 @@ function Sidebar({
                       }`}
                     >
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm truncate ${
-                          currentModel?.id === model.id
-                            ? 'text-primary-600 dark:text-primary-400 font-medium'
-                            : 'text-gray-700 dark:text-gray-300'
-                        }`}>
-                          {model.name}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <p className={`text-sm truncate ${
+                            currentModel?.id === model.id
+                              ? 'text-primary-600 dark:text-primary-400 font-medium'
+                              : 'text-gray-700 dark:text-gray-300'
+                          }`}>
+                            {model.name}
+                          </p>
+                          {(() => {
+                            const source = getEffectivePromptSource(model.id)
+                            if (source === 'model') return (
+                              <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1 py-0 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 font-medium leading-tight">
+                                <Cpu size={8} />
+                                专属
+                              </span>
+                            )
+                            if (source === 'global') return (
+                              <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] px-1 py-0 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 leading-tight">
+                                <Globe size={8} />
+                                全局
+                              </span>
+                            )
+                            return null
+                          })()}
+                        </div>
                         <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
                           {model.modelId}
                         </p>

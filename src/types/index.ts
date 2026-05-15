@@ -74,6 +74,9 @@ export interface AppSettings {
   compactMode: boolean
   lastSelectedModelId?: string
   systemPrompt?: string
+  modelSystemPrompts?: Record<string, string>
+  compressContext?: boolean
+  modelCompressContext?: Record<string, boolean>
 }
 
 export interface LogEntry {

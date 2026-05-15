@@ -10,10 +10,11 @@ async function buildMain()
 {
   await build({
     entryPoints: [path.resolve(__dirname, '../src/main.ts')],
-    outfile: path.resolve(__dirname, '../dist/main.js'),
+    outfile: path.resolve(__dirname, '../dist/main.cjs'),
     bundle: true,
     platform: 'node',
     target: 'node18',
+    format: 'cjs',
     external: ['electron', 'electron-updater'],
     tsconfig: path.resolve(__dirname, '../tsconfig.json'),
     resolveExtensions: ['.ts', '.js', '.json']
@@ -24,7 +25,7 @@ async function buildRenderer()
 {
   return new Promise((resolve, reject) =>
   {
-    const child = exec('npx vite build', {
+    const child = exec('node node_modules/vite/bin/vite.js build', {
       cwd: path.resolve(__dirname, '..')
     }, (error, stdout, stderr) =>
     {
@@ -46,7 +47,7 @@ async function copyAssets()
 {
   await fs.copy(
     path.resolve(__dirname, '../src/preload.js'),
-    path.resolve(__dirname, '../dist/preload.js')
+    path.resolve(__dirname, '../dist/preload.cjs')
   )
 }
 

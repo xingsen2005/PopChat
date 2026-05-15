@@ -3,23 +3,11 @@ import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
 
-let autoUpdater: any = null
-try
-{
-  autoUpdater = require('electron-updater').autoUpdater
-}
-catch
-{
-  autoUpdater = null
-}
-
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: BrowserWindow | null = null
 const streamAbortControllers = new Map<string, AbortController>()
 
-// 智谱 API JWT Token 生成
-// 注意：智谱 API 使用毫秒级时间戳（非标准 JWT 的秒级），这是智谱的约定
 const generateZhipuToken = (apiKey: string): string =>
 {
   const parts = apiKey.split('.')
@@ -64,7 +52,7 @@ const createWindow = () =>
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: true,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
     }
   })
 
@@ -86,91 +74,41 @@ const createWindow = () =>
   Menu.setApplicationMenu(null)
 }
 
-if (autoUpdater)
-{
-  autoUpdater.autoDownload = false
-  autoUpdater.on('update-available', () =>
-  {
-    if (!mainWindow) return
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '发现更新',
-      message: '发现新版本，是否立即下载？',
-      buttons: ['下载', '稍后']
-    }).then((result) =>
-    {
-      if (result.response === 0)
-      {
-        autoUpdater.downloadUpdate()
-      }
-    })
-  })
-
-  autoUpdater.on('update-downloaded', () =>
-  {
-    if (!mainWindow) return
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '更新就绪',
-      message: '更新已下载完成，重启应用以应用更新。',
-      buttons: ['重启', '稍后']
-    }).then((result) =>
-    {
-      if (result.response === 0)
-      {
-        autoUpdater.quitAndInstall()
-      }
-    })
-  })
-}
-
 ipcMain.handle('check-updates', async () =>
 {
-  if (!isDev && autoUpdater)
-  {
-    try
-    {
-      await autoUpdater.checkForUpdates()
-      return { success: true }
-    }
-    catch (error)
-    {
-      return { success: false, error: (error as Error).message }
-    }
-  }
-  return { success: true, message: 'Running in development mode' }
+  return { success: true, message: 'Updates are disabled' }
 })
 
-ipcMain.handle('show-open-dialog', async (_, options) =>
+ipcMain.handle('show-open-dialog', async (_event: Electron.IpcMainInvokeEvent, options: Record<string, unknown>) =>
 {
   if (!mainWindow) return { canceled: true, filePaths: [] }
   const safeOptions: Electron.OpenDialogOptions = {
     title: typeof options?.title === 'string' ? options.title : undefined,
     defaultPath: typeof options?.defaultPath === 'string' ? options.defaultPath : undefined,
-    filters: Array.isArray(options?.filters) ? options.filters : undefined,
-    properties: Array.isArray(options?.properties) ? options.properties.filter((p: string) =>
+    filters: Array.isArray(options?.filters) ? options.filters as Electron.FileFilter[] : undefined,
+    properties: Array.isArray(options?.properties) ? (options.properties as string[]).filter((p: string) =>
       typeof p === 'string' && [
         'openFile', 'openDirectory', 'multiSelections', 'showHiddenFiles',
         'createDirectory', 'promptToCreate', 'dontAddToRecent'
       ].includes(p)
-    ) : undefined
+    ) as Electron.OpenDialogProperty[] : undefined
   }
   const result = await dialog.showOpenDialog(mainWindow, safeOptions)
   return result
 })
 
-ipcMain.handle('show-message-box', async (_, options) =>
+ipcMain.handle('show-message-box', async (_event: Electron.IpcMainInvokeEvent, options: Record<string, unknown>) =>
 {
   if (!mainWindow)
   {
     return { response: 0, checkboxChecked: false }
   }
   const safeOptions: Electron.MessageBoxOptions = {
-    type: ['none', 'info', 'error', 'question', 'warning'].includes(options?.type) ? options.type : 'info',
+    type: ['none', 'info', 'error', 'question', 'warning'].includes(options?.type as string) ? options.type as Electron.MessageBoxType : 'info',
     title: typeof options?.title === 'string' ? options.title : undefined,
     message: typeof options?.message === 'string' ? options.message : '',
     detail: typeof options?.detail === 'string' ? options.detail : undefined,
-    buttons: Array.isArray(options?.buttons) ? options.buttons.slice(0, 5).filter((b: unknown) => typeof b === 'string') : undefined,
+    buttons: Array.isArray(options?.buttons) ? (options.buttons as string[]).slice(0, 5).filter((b: unknown) => typeof b === 'string') : undefined,
     defaultId: typeof options?.defaultId === 'number' ? options.defaultId : undefined,
     cancelId: typeof options?.cancelId === 'number' ? options.cancelId : undefined
   }
@@ -178,7 +116,7 @@ ipcMain.handle('show-message-box', async (_, options) =>
   return result
 })
 
-ipcMain.handle('read-file-content', async (_, filePath: string) =>
+ipcMain.handle('read-file-content', async (_event: Electron.IpcMainInvokeEvent, filePath: string) =>
 {
   try
   {
@@ -212,7 +150,7 @@ ipcMain.handle('read-file-content', async (_, filePath: string) =>
   }
 })
 
-ipcMain.handle('safe-storage-encrypt', async (_, text: string) =>
+ipcMain.handle('safe-storage-encrypt', async (_event: Electron.IpcMainInvokeEvent, text: string) =>
 {
   if (!safeStorage.isEncryptionAvailable())
   {
@@ -229,7 +167,7 @@ ipcMain.handle('safe-storage-encrypt', async (_, text: string) =>
   }
 })
 
-ipcMain.handle('safe-storage-decrypt', async (_, encryptedBase64: string) =>
+ipcMain.handle('safe-storage-decrypt', async (_event: Electron.IpcMainInvokeEvent, encryptedBase64: string) =>
 {
   if (!safeStorage.isEncryptionAvailable())
   {
@@ -247,7 +185,7 @@ ipcMain.handle('safe-storage-decrypt', async (_, encryptedBase64: string) =>
   }
 })
 
-ipcMain.handle('api-request', async (_, options: {
+ipcMain.handle('api-request', async (_event: Electron.IpcMainInvokeEvent, options: {
   url: string
   method?: string
   provider: string
@@ -330,7 +268,7 @@ ipcMain.handle('api-request', async (_, options: {
   }
 })
 
-ipcMain.handle('fetch-token-quota', async (_, options: {
+ipcMain.handle('fetch-token-quota', async (_event: Electron.IpcMainInvokeEvent, options: {
   provider: string
   apiKey: string
   baseURL: string
@@ -429,7 +367,7 @@ ipcMain.handle('fetch-token-quota', async (_, options: {
   }
 })
 
-ipcMain.handle('api-stream-abort', async (_, streamId?: string) =>
+ipcMain.handle('api-stream-abort', async (_event: Electron.IpcMainInvokeEvent, streamId?: string) =>
 {
   if (streamId)
   {
@@ -453,7 +391,7 @@ ipcMain.handle('api-stream-abort', async (_, streamId?: string) =>
   return { success: true }
 })
 
-ipcMain.handle('api-stream-request', async (_, options: {
+ipcMain.handle('api-stream-request', async (_event: Electron.IpcMainInvokeEvent, options: {
   url: string
   provider: string
   apiKey: string
@@ -642,11 +580,6 @@ ipcMain.handle('api-stream-request', async (_, options: {
 app.whenReady().then(() =>
 {
   createWindow()
-
-  if (!isDev && autoUpdater)
-  {
-    autoUpdater.checkForUpdates()
-  }
 
   app.on('activate', () =>
   {

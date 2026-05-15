@@ -1,6 +1,8 @@
 node_modules
 dist
 release
+release-final
+builder-cache
 .env
 .DS_Store
 *.log
